@@ -4,7 +4,8 @@ use ExtUtils::MakeMaker;
 WriteMakefile(
     'NAME'		=> 'Data::Match',
     'VERSION_FROM'	=> 'Match.pm', # finds $VERSION
-    'PREREQ_PM'		=> {}, # e.g., Module::Name => 1.1
+    'PREREQ_PM'		=> { 'Data::Dumper' => '0.1', 'Data::Compare' => '0.1' },
+	      # e.g., Module::Name => 1.1
     ($] >= 5.005 ?    ## Add these new keywords supported since 5.005
       (ABSTRACT_FROM => 'Match.pm', # retrieve abstract from module
        AUTHOR     => 'Kurt Stephens <kurtstephens@acm.org>') : ()),

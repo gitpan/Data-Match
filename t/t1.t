@@ -1,13 +1,13 @@
 #!/usr/bin/perl
 
-# $Id: t1.t,v 1.1 2001/12/24 02:01:18 stephens Exp $
+# $Id: t1.t,v 1.3 2001/12/24 08:27:20 stephens Exp $
 
 use strict;
 use Test;
 
 my @tests;
 my $n_tests;
-my $verbose = 0;
+my $verbose = do { no warnings; $ENV{TEST_VERBOSE} > 1 };
 
 BEGIN { 
   print join(', ', @ARGV), "\n";
@@ -26,16 +26,17 @@ my $tests = q{
     match([ 1 ], [ 1 ]);
   ! match([ 1 ], [ ]);
   ! match([ ],   [ 1 ]);
+  ! match([ 1, 2 ], [ 1 ]);
+  ! match([ 1 ],    [ 1, 2 ]);
 
     match({}, {});
-    match({ 'a' => 1 }, { 'a' => 1 });
+    match({ 'a'=>1 }, { 'a' => 1 });
   ! match({ },          { 'a' => 1 });
   ! match({ 'a' => 1 }, { });
   ! match({ 'a' => 1 }, { 'b' => '1' });
   ! match({ 'a' => 1 }, { 'a' => 2 });
-
-  ! match([ 1, 2 ], [ 1 ]);
-  ! match([ 1 ],    [ 1, 2 ]);
+  ! match({ 'a' => 1 }, { 'c' => 5 });
+    match({ 'a'=>1, 'b'=>[ 1 ] }, { 'a'=>1, 'b'=>[ ANY() ] });
 
     match([ 1, 2, 3 ], BIND('x'));
     match([ 1, 2, 3 ], [ BIND('x'), BIND('y'), 3 ]);
@@ -43,9 +44,14 @@ my $tests = q{
     match([ 1, 2, 1 ], [ BIND('x'), ANY(), BIND('x') ]);
   ! match([ 1, 2, 4 ], [ BIND('x'), ANY(), BIND('x') ]);
     match([ 1, [ 1, 2, 1 ], 2 ], [ ANY(), [ BIND('x'), ANY, BIND('x') ], REST ]);
+    match([ [ 1 ], 2, [ 1 ] ], [ BIND('x'), ANY(), BIND('x') ]);
+    match([ { 'a'=>1 }, 2, { 'a'=>1 } ], [ BIND('x'), ANY(), BIND('x') ]);
+  ! match([ { 'a'=>1 }, 2, { 'b'=>1 } ], [ BIND('x'), ANY(), BIND('x') ]);
+
+    match({ 'a' => 1, 'b' => 2 }, EACH(COLLECT('x', { 'a' => ANY })));
 
     match([ 1, 2, 3 ], COLLECT('x'));
-    match([ 1, 2, 3 ], [ COLLECT('x'), ANY, COLLECT('x') ]);
+    match([ 1, 2, 3 ], [ COLLECT('x'), ANY(), COLLECT('x') ]);
   ! match([ 1, 2, 3 ], [ COLLECT('x'), 5, COLLECT('x') ]);
 
     match([ 1, 2, 4 ], ISA('ARRAY'));
@@ -53,6 +59,18 @@ my $tests = q{
 
     match([ 'foo', 'bar', 'baz' ], EACH(COLLECT('x', REGEX(q{z$}))));
   ! match([ 'foo', 'bar', 'baz' ], EACH(COLLECT('x', REGEX(q{^foobar$}))));
+
+    match([ 1, 2, 3, 4 ],           EACH(COLLECT('x', OR(2, 3))) );
+    match([ 1, 2, 3, 4 ],           EACH(COLLECT('x', OR('foo', 3))) );
+  ! match([ 1, 2, 3, 4 ],           EACH(COLLECT('x', OR('foo', 'bar'))) );
+
+    match(0,           NOT());
+  ! match(1,           NOT());
+    match([ 1, 2, 3, 4 ],           EACH(COLLECT('x', NOT(OR(2, 3)))) );
+
+    match([    2, 3    ],           ALL(COLLECT('x', OR(2, 3))) );
+  ! match([ 1, 2, 3, 4 ],           ALL(COLLECT('x', OR(2, 3))) );
+    match([ 1,       4 ],           ALL(COLLECT('x', NOT(OR(2, 3)))) );
 
     match([ 1, 2, 4 ], BIND('x', ISA('ARRAY')));
   ! match([ 1, 2, 4 ], BIND('x', ISA('HASH')));
@@ -63,7 +81,7 @@ my $tests = q{
     match([ 1, 2, 3 ], [ 1, 2, REST() ]);
     match([ 1, 2, 3, 4 ], [ 1, 2, REST(BIND('r')) ]);
 
-  ! match({}                 , REST );
+  ! match({}                 , REST() );
     match({}                 , { REST() => REST(BIND('x')) } );
     match({ 'a'=>1, 'b'=>2 } , { REST() => REST(BIND('x')) } );
     match({ 'a'=>1, 'b'=>2, 'c'=>3 }, { 'a'=>1, 'b'=>2, REST() => REST(BIND('x')) });
@@ -78,14 +96,26 @@ my $tests = q{
   ! match({ 'a'=>1, 'b'=>2, 'c'=>3 }, EACH(COLLECT('x', { ANY() => 5 })));
     match({ 'a'=>1, 'b'=>2, 'c'=>3, 'd'=>2, 'e'=>5 }, EACH(COLLECT('x', { ANY() => 2})));
 
-    match([ 1, 2, 3 ], FIND(COLLECT('x', 2)));
-  ! match([ 1, 2, 3 ], FIND(COLLECT('x', 5)));
+    match([ 1, 2, 3 ],       FIND(COLLECT('x', 2)));
+  ! match([ 1, 2, 3 ],       FIND(COLLECT('x', 5)));
     match([ 1, 2, 3, 2, 5 ], FIND(COLLECT('x', 2)));
     match([ 1, 2, [ 1, 2, [ 1, 2 ] ], 3 ],   FIND(COLLECT('x', 2)));
     match([ 1, 2, [ 1, 2, [ 1, 2 ] ], 3 ],   FIND(COLLECT('x', [ 1, 2 ])));
     match([ 1, 2, [ 'a', 2, [ 1, 2 ] ], 3 ], FIND(COLLECT('x', [ 1, REST ])));
-  ! match([ 1, 2, [ 1, 2, [ 1, 2 ] ], 3 ], FIND(COLLECT('x', 5)));
-  ! match([ 1, 2, [ 1, 2, [ 1, 2 ] ], 3 ], FIND(COLLECT('x', 5)));
+  ! match([ 1, 2, [ 1, 2, [ 1, 2 ] ], 3 ],   FIND(COLLECT('x', 5)));
+  ! match([ 1, 2, [ 1, 2, [ 1, 2 ] ], 3 ],   FIND(COLLECT('x', 5)));
+
+  ! match('', LENGTH);
+    match('x', LENGTH);
+  ! match([], LENGTH);
+    match([ 'x' ], LENGTH);
+    match([ 1, 2, 3 ], LENGTH);
+    match([ 1, 2, 3 ], [ 1, 2, REST(LENGTH)]);
+  ! match([ 1, 2, 3 ], [ 1, 2, 3, REST(LENGTH)]);
+
+    match(1, EXPR(q{$_ > 0}));
+  ! match(1, EXPR(q{$_ > 1}));
+    match([ 1, 2, 3 ], EACH(COLLECT('x', EXPR(q{$_ > 1}))));
   };
 #)emacs
 
@@ -93,12 +123,13 @@ my $tests = q{
   grep(s/^\s+//, @tests);
   @tests = grep(length $_, @tests);
   $n_tests = @tests;
-  warn "n_tests=$n_tests";
+  #warn "n_tests=$n_tests";
 
   plan tests => $n_tests;
 };
 
 use Data::Match qw(:all);
+use Data::Compare;
 
 
 sub UNIT_TEST
@@ -123,7 +154,7 @@ sub UNIT_TEST
     eval "no warnings; (\$main::matched, \$main::results) = $expr";
     die "$@: $expr" if $@;
 
-    my ($matched, $results) = ($main::matched, $main::results);
+    my ($matched, $results) = do { no warnings; ($main::matched, $main::results) };
     my $passed = $matched;
     $passed = ! $passed if $invert;
 
@@ -141,8 +172,8 @@ sub UNIT_TEST
 	      my $ps = match_path_str($p, '$_[0]', $results);
 	      my $pv = match_path_get($p, $results->{'root'}, $results);
 
-	      my $path_ok = matches($pv, $v);
-	      print "  PATH $ps ($pv) ne $v\n" if ! $path_ok || $tv;
+	      my $path_ok = Compare($pv, $v);
+	      print "  PATH $ps ($pv) ne $v\n" if ! $path_ok;
 
 	      $passed &&= $path_ok;
 	    }
@@ -168,7 +199,7 @@ sub UNIT_TEST
     ++ $n_passed if $passed;
   }
 
-  print STDERR "\n$n_passed passed / $n_tests tests \n";
+  print STDERR "\n$n_passed passed / $n_tests tests \n" if $verbose;
 
   $n_passed == $n_tests ? 0 : 1;
 }

@@ -23,7 +23,7 @@ Data::Match provides extensible complex perl data structure searching and matchi
 
 =head1 PATTERNS
 
-A data pattern is a complex data structure that possibly matches another complex data structure.  Fo example.
+A data pattern is a complex data structure that possibly matches another complex data structure.  For example:
 
   matches([ 1, 2 ], [ 1, 2 ]); # is true
 
@@ -61,7 +61,7 @@ C<'ps'> is a list of code strings that describes where the match was for each ma
 
 =head1 CAVEATS
 
-Does not handle circular data structures properly.  Does not have regex-like operators like '?', '*', '+'.  Should probably incorporate L<Data::DRef> and L<Data::Walker>. 
+Blessed structures are not traversed.  Circular data structures are not handled properly.  Does not have regex-like operators like '?', '*', '+'.  Should probably have interfaces to Data::DRef and Data::Walker. 
 
 =head1 STATUS
 
@@ -78,15 +78,18 @@ This section describes the components of this module.
 use strict;
 use warnings;
 
-our $VERSION = '0.01';
-our $REVISION = do { my @r = (q$Revision: 1.1 $ =~ /\d+/g); sprintf "%d." . "%02d" x $#r, @r };
+our $VERSION = '0.02';
+our $REVISION = do { my @r = (q$Revision: 1.5 $ =~ /\d+/g); sprintf "%d." . "%02d" x $#r, @r };
 
+our $PACKAGE = __PACKAGE__;
 
 use Exporter;
 our @ISA = qw(Exporter);
 our @EXPORT = qw();
+
 our @export_func = qw(match matches match_path_str match_path_get match_path_ref);
-our @export_pat = qw(ANY AND OR BIND COLLECT REGEX ISA REST EACH FIND);
+our @autoload_pat = qw(ANY AND OR NOT BIND COLLECT REGEX ISA REST EACH ALL FIND LENGTH EXPR);
+our @export_pat = @autoload_pat;
 our @EXPORT_OK = (@export_func, @export_pat);
 our %EXPORT_TAGS = ( 
 		     'all'  => \@EXPORT_OK,
@@ -101,61 +104,38 @@ our $debug = 0;
 
 
 #########################################################################
+# Automagically create creator functions for common patterns.
+#
 
 
-sub ANY
+our %autoload_pat = map(($_, 1), @autoload_pat);
+
+sub AUTOLOAD
 {
-  bless [ @_ ], 'Data::Match::Pattern::ANY';
+  no strict "refs";
+  use vars qw($AUTOLOAD);
+
+  my ($pkg, $pat) = $AUTOLOAD =~ /^(.*)::(\w+)$/;
+
+  my ($self) = @_;
+
+  if ( $autoload_pat{$pat} eq 1 ) {
+    my $pat_cls = "${pkg}::Pattern::${pat}";
+    # $DB::single = 1;
+    my $code = eval "sub { new $pat_cls(\@_); }";
+    die "$@: PAT=$pat" if $@;
+    *{$AUTOLOAD} = $autoload_pat{$pat} = $code;
+    #warn "AUTOLOADED $pat_cls";
+    #print "AUTOLOAD $AUTOLOAD: ", Data::Dumper->new([ \@_ ], [ qw(@_) ])->Indent(0)->Purity(1)->Terse(0)->Dump(), "\n\n";
+    $code->(@_);
+  } else {
+    $self->SUPER::AUTOLOAD(@_);
+    die "no such method: $AUTOLOAD";
+  }
 }
 
 
-sub AND
-{
-  bless [ @_ ], 'Data::Match::Pattern';
-}
-
-*OR = \&ANY;
-
-sub BIND
-{
-  bless [ @_ ], 'Data::Match::Pattern::BIND';
-}
-
-
-sub COLLECT
-{
-  bless [ @_ ], 'Data::Match::Pattern::COLLECT';
-}
-
-
-sub REGEX
-{
-  bless [ @_ ], 'Data::Match::Pattern::REGEX';
-}
-
-
-sub ISA
-{
-  bless [ @_ ], 'Data::Match::Pattern::ISA';
-}
-
-
-sub REST
-{
-  bless [ @_ ], 'Data::Match::Pattern::REST';
-}
-
-
-sub EACH
-{
-  bless [ @_ ], 'Data::Match::Pattern::EACH';
-}
-
-
-sub FIND
-{
-  bless [ @_ ], 'Data::Match::Pattern::FIND';
-}
+*OR = \&ANY; # See ANY::match => match_or.
 
 
 #########################################################################
@@ -184,10 +164,17 @@ sub _match_ARRAY
       # [ 'x', 'y', REST ] matches [ 'x', 'y', 'z', '1', '2', '3' ]
       if ( ! $results->{'disable_patterns'} && 
 	 UNIVERSAL::isa($p->[$i], 'Data::Match::Pattern::REST') ) {
-	my $last_i = $#$x;
-	push(@{$results->{'path'}}, [$i, $last_i]);
-	
-	$match &&= $p->[$i]->_match_rest_array([ @{$x}[$i .. $last_i] ], $results);
+	push(@{$results->{'path'}}, [$i, scalar @$x]);
+
+	# Create an new array slice to match the rest of the array.
+	my $slice;
+	if ( 1 ) {
+	  $slice = new Data::Match::Slice::Array($x, $i, scalar @$x);
+	} else {
+	  $slice = [ @{$x}[$i .. $#$x] ];
+	}
+
+	$match &&= $p->[$i]->_match_rest_array($slice, $results);
 	
 	pop(@{$results->{'path'}});
 	last ARRAY;
@@ -283,18 +270,23 @@ sub _match_HASH
     
     # Handle REST pattern's subpatterns.
     if ( $rest_pat ) {
-      # Create a temporary hash slice containing
-      # the values from $x for all the unmatched keys.
-      my $rest = { };
       my @rest_keys = grep(! exists $matched_keys{$_}, keys %$x);
 
-      @{$rest}{@rest_keys} = @{$x}{@rest_keys};
+      # Create a temporary hash slice containing
+      # the values from $x for all the unmatched keys.
+      my $slice;
+      if ( 1 ) {
+	$slice = new Data::Match::Slice::Hash($x, \@rest_keys);
+      } else {
+	$slice = { };
+	@{$slice}{@rest_keys} = @{$x}{@rest_keys};
+      }
 
       # See match_path_str().
       push(@{$results->{'path'}}, \@rest_keys);
 
       #$DB::single = 1;
-      $match &&= $rest_pat->_match_rest_hash($rest, $results);
+      $match &&= $rest_pat->_match_rest_hash($slice, $results);
 
       pop(@{$results->{'path'}});
     }
@@ -397,6 +389,11 @@ sub _match
 }
 
 
+=head2 %match_opts
+
+Default options for C<match>.
+
+=cut
 our %match_opts;
 
 =head2 match
@@ -561,10 +558,8 @@ sub match_path_str
 
     if ( $ref eq 'ARRAY' ) {
       if ( ref($ind) eq 'ARRAY' ) {
-	# It was a hash slice so we need to create a temporary array
-	# of the hash slice.
-	$ind = "$ind->[0]..$ind->[1]";
-	$str = '([@{' . $str . '}[' . $ind . ']])';
+	# Create a temporary array slice.
+	$str = "(Data::Match::Slice::Array->new($str,$ind->[0],$ind->[1]))";
       } else {
 	$str .= "->[$ind]";
       }
@@ -572,23 +567,26 @@ sub match_path_str
     elsif ( $ref eq 'HASH' ) {
       if ( ref($ind) eq 'ARRAY' ) {
 	# Create a temporary hash slice.
-	my @elems;
-
-	for my $k ( sort @$ind ) {
-	  my $q = '"' . quotemeta($k) . '"';
-	  push(@elems, $q . ',' . $str . '->{' . $q .'}');
-	}
-
-	$str = '({' . join(',', @elems) . '})';
+	my $elems = join(',', map('"' . quotemeta($_) . '"', sort @$ind));
+	$str = "(Data::Match::Slice::Hash->new($str,[$elems]))";
       } else {
-	my $q = quotemeta($ind);
-	$ind = "\"$q\"" if ( 1 || $q ne $ind );
+	$ind = '"'. quotemeta($ind) . '"';
 	$str .= "->{$ind}";
       }
     }
     elsif ( $ref eq 'SCALAR' ) {
       # Maybe there is a better -> syntax?
       $str = "(\${$str})";
+    }
+    elsif ( $ref eq 'METHOD' ) {
+      if ( ref($ind) eq 'ARRAY' ) {
+	my @args = @$ind;
+	my $method = shift @args;
+	
+	$str = $str . "->$method(" . join(',', map('"'. quotemeta($_) . '"', @args)) . ')';
+      } else {
+	confess "AIIIEE!!";
+      }
     }
     else {
       $str = undef;
@@ -604,7 +602,32 @@ sub match_path_str
 
 package Data::Match::Pattern;
 
-sub subpattern_offset { 0; };
+use Carp qw(confess);
+
+
+sub new
+{
+  my ($cls, @args) = @_;
+  # $DB::single = 1;
+  (bless \@args, $cls)->initialize->_is_valid;
+}
+
+
+sub initialize { shift; }
+
+
+sub _is_valid
+{
+  my $self = shift;
+
+  confess("INVALID " . ref($self) . ": expect at least " . $self->subpattern_offset . " elements")
+    unless @$self >= $self->subpattern_offset;
+
+  $self;
+}
+
+
+sub subpattern_offset { 0; }
 
 sub match_and
 {
@@ -631,6 +654,28 @@ sub match_or
 
 
 *match = \&match_and;
+
+
+##################################################
+
+package Data::Match::Pattern::AND;
+
+our @ISA = qw(Data::Match::Pattern);
+
+
+##################################################
+
+package Data::Match::Pattern::NOT;
+
+our @ISA = qw(Data::Match::Pattern);
+
+sub match
+{
+  my ($self, $x, $results) = @_;
+
+  # $DB::single = 1;
+  ! ((scalar @$self) ? $self->match_and($x, $results) : $x);
+}
 
 
 ##################################################
@@ -700,7 +745,10 @@ sub match
 
 ##################################################
 
+
 package Data::Match::Pattern::BIND;
+
+use Data::Compare;
 
 our @ISA = qw(Data::Match::Pattern::COLLECT);
 
@@ -723,7 +771,7 @@ sub match
 
   if ( $binding ) {
     #$DB::single = 1;
-    if ( Data::Match::matches($binding->{'v'}[0], $x) ) {
+    if ( Compare($binding->{'v'}[0], $x) ) {
       $self->_collect($x, $results, $binding);
     } else {
       return 0;
@@ -737,6 +785,7 @@ sub match
 
 
 ##################################################
+
 
 package Data::Match::Pattern::REGEX;
 
@@ -757,6 +806,7 @@ sub match
 
 ##################################################
 
+
 package Data::Match::Pattern::ISA;
 
 our @ISA = qw(Data::Match::Pattern);
@@ -772,6 +822,81 @@ sub match
 
 
 ##################################################
+
+
+package Data::Match::Pattern::LENGTH;
+
+our @ISA = qw(Data::Match::Pattern);
+
+sub subpattern_offset { 0; };
+
+sub match 
+{
+  my ($self, $x, $results) = @_;
+
+  if ( ref($x) ) {
+    if ( ref($x) eq 'ARRAY' ) {
+      $x = @$x;
+    }
+    elsif ( ref($x) eq 'HASH' ) {
+      $x = %$x;
+    }
+    else {
+      $x = undef;
+    }
+  } else {
+    $x = length $x;
+  }
+
+  @$self ? $self->match_and($x, $results) : $x;
+}
+
+
+##################################################
+
+
+package Data::Match::Pattern::EXPR;
+
+use Carp qw(confess);
+
+our @ISA = qw(Data::Match::Pattern);
+
+sub subpattern_offset { 2; };
+
+
+sub initialize
+{
+  my $self = shift;
+
+  # $DB::single = 1;
+
+  # Make room for EXPR.
+  splice(@$self, 1, 0, 'UGH');
+
+  if ( ref($self->[0]) eq 'CODE' ) {
+    $self->[1] = $self->[0];
+  } else {
+    my $expr = $self->[0];
+    $self->[1] = eval "sub { local \$_ = \$_[0]; $expr; }";
+    confess "$@: $expr" if $@;
+  }
+
+  $self;
+}
+
+
+sub match 
+{
+  my ($self, $x, $results) = @_;
+
+  $DB::single = 1;
+
+  $self->[1]->($x, $results, $self) && $self->match_and($x, $results);
+}
+
+
+##################################################
+
 
 package Data::Match::Pattern::REST;
 
@@ -803,9 +928,77 @@ sub _match_rest_hash
 
 ##################################################
 
+
 package Data::Match::Pattern::EACH;
 
 our @ISA = qw(Data::Match::Pattern);
+
+
+sub _match_each_array
+{
+  my ($self, $x, $results, $matches) = @_;
+
+  ++ $results->{'depth'};
+  push(@{$results->{'path'}}, ref($x));
+  
+  my $i = -1;
+  for my $e ( @$x ) {
+    push(@{$results->{'path'}}, ++ $i);
+    ++ $$matches if $self->match_and($e, $results);
+    pop(@{$results->{'path'}});
+  }
+  
+  pop(@{$results->{'path'}});
+  -- $results->{'depth'};
+}
+
+
+sub _match_each_hash
+{
+  my ($self, $x, $results, $matches) = @_;
+
+  ++ $results->{'depth'};
+  push(@{$results->{'path'}}, ref($x));
+  
+  for my $k ( keys %$x ) {
+    my @k = ( $k );
+
+    # We compensate the path for hash slice.
+    push(@{$results->{'path'}}, \@k);
+    
+    # Create a temporary hash slice.
+    # because we are matching EACH element of the hash.
+    my $slice;
+    if ( 1 ) {
+      $slice = new Data::Match::Slice::Hash($x, \@k);
+    } else {
+      $slice = { $k => $x->{$k} };
+    }
+
+    ++ $$matches if $self->match_and($slice, $results);
+    
+    pop(@{$results->{'path'}});
+  }
+  
+  pop(@{$results->{'path'}});
+  -- $results->{'depth'};
+}
+
+
+sub _match_each_scalar
+{
+  my ($self, $x, $results, $matches) = @_;
+
+  ++ $results->{'depth'};
+  push(@{$results->{'path'}}, ref($x), undef);
+  
+  ++ $$matches if $self->match_and($$x, $results);
+  
+  pop(@{$results->{'path'}});
+  pop(@{$results->{'path'}});
+  -- $results->{'depth'};
+}
+
 
 sub _match_each
 {
@@ -814,51 +1007,13 @@ sub _match_each
   # Traverse.
   if ( ref($x) ) {
     if ( ref($x) eq 'ARRAY' ) {
-      ++ $results->{'depth'};
-      push(@{$results->{'path'}}, ref($x));
-
-      my $i = -1;
-      for my $e ( @$x ) {
-	push(@{$results->{'path'}}, ++ $i);
-	++ $$matches if $self->match_and($e, $results);
-	pop(@{$results->{'path'}});
-      }
-
-      pop(@{$results->{'path'}});
-      -- $results->{'depth'};
+      $self->_match_each_array($x, $results, $matches);
     }
     elsif ( ref($x) eq 'HASH' ) {
-      ++ $results->{'depth'};
-      push(@{$results->{'path'}}, ref($x));
-
-      for my $k ( keys %$x ) {
-	my $v = $x->{$k};
-	# Create a temporary hash containing
-	# the current key => value
-	# because we are matching EACH element of the hash.
-	#
-	my $temp = { $k => $v };
-
-	# We compensate the path so a temporary hash.
-	push(@{$results->{'path'}}, [ $k ]);
-	
-	++ $$matches if $self->match_and($temp, $results);
-
-	pop(@{$results->{'path'}});
-      }
-
-      pop(@{$results->{'path'}});
-      -- $results->{'depth'};
+      $self->_match_each_hash($x, $results, $matches);
     }
     elsif ( ref($x) eq 'SCALAR' ) {
-      ++ $results->{'depth'};
-      push(@{$results->{'path'}}, ref($x), undef);
-
-      ++ $$matches if $self->match_and($$x, $results);
-
-      pop(@{$results->{'path'}});
-      pop(@{$results->{'path'}});
-      -- $results->{'depth'};
+      $self->_match_each_scalar($x, $results, $matches);
     }
     else {
       # Try to match it explicitly.
@@ -878,6 +1033,38 @@ sub match
 
   $matches;
 }
+
+
+##################################################
+
+
+package Data::Match::Pattern::ALL;
+
+our @ISA = qw(Data::Match::Pattern::EACH);
+
+
+sub match
+{
+  my ($self, $x, $results) = @_;
+
+  my $matches = 0;
+
+  my $expected = $self;
+
+  if ( ref($x) eq 'ARRAY' ) {
+    $expected = scalar @$x;
+  }
+  elsif ( ref($x) eq 'HASH' ) {
+    $expected = scalar %$x;
+  } else {
+    $expected = -1;
+  }
+
+  $self->_match_each($x, $results, \$matches);
+
+  $matches == $expected;
+}
+
 
 
 ##################################################
@@ -972,13 +1159,188 @@ sub match
 }
 
 
+#################################################
+
+
+package Data::Match::Slice::Array;
+
+our $debug = 0;
+
+sub new
+{
+  my $cls = shift;
+  my @x;
+  tie @x, $cls, @_;
+  \@x;
+}
+
+
+sub TIEARRAY
+{
+  my ($cls, $src, $from, $to) = @_;
+  $DB::single = $debug;
+  $from = 0 unless defined $from;
+  $to = @$src unless defined $to;
+  die "slice must be $from <= $to" unless $from <= $to;
+  bless [ $src, $from, $to ], $cls;
+}
+
+sub FETCH 
+{
+  my $i = $_[1];
+  $DB::single = $debug;
+  $i = FETCHSIZE($_[0]) - $i if $i < 0;
+  0 <= $i && $i < FETCHSIZE($_[0])
+    ? $_[0][0]->[$_[0][1] + $i] 
+    : undef;
+}
+sub STORE 
+{
+  $DB::single = $debug;
+  STORESIZE($_[0], $_[1] + 1) if ( $_[1] >= $_[0][1] );
+  $_[0][0]->[$_[0][1] + $_[1]] = $_[2];
+}
+sub FETCHSIZE 
+{
+  $DB::single = $debug;
+  $_[0][2] - $_[0][1];
+}
+sub STORESIZE 
+{
+  $DB::single = $debug;
+  if ( $_[1] > FETCHSIZE($_[0]) ) {
+    PUSH($_[0], (undef) x (FETCHSIZE($_[0]) - $_[1]));
+  } else {
+    SPLICE($_[0], 0, $_[1]);
+  }
+  $_[0][2] = $_[0][1] + $_[1];
+}
+sub POP 
+{
+  $DB::single = $debug;
+  $_[0][2] > $_[0][1] ? splice(@{$_[0][0]}, -- $_[0][2], 1) : undef;
+}
+sub PUSH 
+{
+  my $s = shift;
+  my $o = $s->[2];
+  $s->[2] += scalar(@_);
+  splice(@{$s->[0]}, $s->[2], $o, @_); 
+}
+sub SHIFT 
+{ 
+  $DB::single = $debug;
+  $_[0][1] < $_[0][2]
+    ? splice(@{$_[0][0]}, $_[0][1] ++, 1)
+    : undef;
+}
+sub UNSHIFT 
+{ 
+  $DB::single = $debug;
+  my $s = shift;
+  $_[0][2] += scalar @_;
+  splice(@{$s->[0]}, $_[0][1], 0, @_);
+}
+sub SPLICE 
+{
+  $DB::single = $debug;
+  my $s = shift;
+  my $o = shift;
+  my $l = shift;
+  $_[0][2] += @_ - $l;
+  splice(@{$_[0][0]}, $_[0][1] + $o, $l, @_);
+}
+sub DELETE 
+{ 
+  $DB::single = $debug;
+  0 <= $_[1] && $_[1] < FETCHSIZE($_[0]) && delete $_[0][0][$_[0][1] + $_[1]];
+}
+sub EXTEND
+{ 
+  $DB::single = $debug;
+  $_[0][0];
+}
+sub EXISTS 
+{ 
+  $DB::single = $debug;
+  0 <= $_[1] && $_[1] < FETCHSIZE($_[0]) && defined $_[0][0][$_[0][1] + $_[1]];
+}
+
+
+#########################################################################
+
+
+package Data::Match::Slice::Hash;
+
+our $debug = 0;
+
+sub new
+{
+  my $cls = shift;
+  my %x;
+  tie %x, $cls, @_;
+  \%x;
+}
+
+
+sub TIEHASH
+{
+  my ($cls, $src, $keys) = @_;
+  $DB::single = $debug;
+  bless [ $src, { map(($_, $_), @$keys) } ], $cls;
+}
+
+
+sub FETCH 
+{
+  $DB::single = $debug;
+  $_[0][1]->{$_[1]} ? $_[0][0]->{$_[1]} : undef;
+}
+sub STORE 
+{ 
+  $DB::single = $debug;
+  $_[0][1]->{$_[1]} = 1;
+  $_[0][0]->{$_[1]} = $_[2];
+}
+sub DELETE 
+{ 
+  $DB::single = $debug;
+  if ( exists $_[0][1]->{$_[1]} ) {
+    delete $_[0][1]->{$_[1]}; 
+    delete $_[0][0]->{$_[1]};
+  }
+}
+sub CLEAR 
+{ 
+  $DB::single = $debug;
+  for my $k ( keys %{$_[0][1]} ) { 
+    delete $_[0][0]->{$k} 
+  }; 
+  %{$_[0][1]} = ();
+}
+sub EXISTS 
+{ 
+  $DB::single = $debug;
+  exists $_[0][1]->{$_[1]};
+}
+sub FIRSTKEY 
+{ 
+  $DB::single = $debug;
+  each %{$_[0][1]}; 
+}
+sub NEXTKEY 
+{ 
+  $DB::single = $debug;
+  each %{$_[0][1]};
+}
+
+
 
 #########################################################################
 
 =head1 VERSION
 
-Version 0.01.
-$Revision: 1.1 $
+Version 0.02, $Revision: 1.5 $.
 
 =head1 AUTHOR
 
@@ -986,7 +1348,7 @@ Kurt A. Stephens <kurtstephens@acm.org>
 
 =head1 SEE ALSO
 
-L<perl>, L<Data::Dumper>, L<Data::DRef>, L<Data::Walker>.
+L<perl>, L<Data::Compare>, L<Data::Dumper>, L<Data::DRef>, L<Data::Walker>.
 
 =cut
 

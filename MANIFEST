@@ -5,4 +5,5 @@ Match.pm
 README
 test.pl
 t/t1.t
-
+t/t2.t
+t/t3.t

@@ -4,3 +4,10 @@ Revision history for Perl extension Data::Match.
 	- original version; created by h2xs 1.21 with options
 		-X -n Data::Match
 
+0.02  2001/12/23
+	- Added subarray and subhash support for slice side-effects.
+	  Added side-effecting slices for REST and EACH.
+          Added LENGTH, EXPR, ALL, NOT pattern operators.
+          Added more tests.
+          Standard pattern operators are AUTOLOADED.
+	  Use Data::Compare for BIND test.
