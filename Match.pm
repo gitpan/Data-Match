@@ -10,39 +10,44 @@ Data::Match - Complex data structure pattern matching
 =head1 SYNOPSIS
 
   use Data::Match qw(:all);
-
   my ($match, $results) = match($structure, $pattern);
+
+  use Data::Match;
+  my $obj = new Data::Match;
+  my ($match, $results) = $obj->execute($structure, $pattern);
 
 =head1 DESCRIPTION
 
-Data::Match provides extensible complex perl data structure searching and matching.
+Data::Match provides extensible complex Perl data structure searching and matching.
 
 =head1 EXPORT
 
-  None are exported by default.  C<:func> exports C<match> and C<matches>, C<:pat> exports all the pattern element generators below, C<:all> exports C<:func> and C<:pat>.
+None are exported by default.  C<:func> exports C<match> and C<matches>, C<:pat> exports all the pattern element generators below, C<:all> exports C<:func> and C<:pat>.
 
 =head1 PATTERNS
 
 A data pattern is a complex data structure that possibly matches another complex data structure.  For example:
 
-  matches([ 1, 2 ], [ 1, 2 ]); # is true
+  matches([ 1, 2 ], [ 1, 2 ]); # TRUE
 
-  matches([ 1, 2, 3 ], [ 1, ANY, 2 ]); # is true
+  matches([ 1, 2, 3 ], [ 1, ANY, 3 ]); # TRUE
+
+  matches([ 1, 2, 3 ], [ 1, ANY, 2 ]); # FALSE: 3 != 2
 
 C<ANY> matches anything, including an undefined value.
 
-  my $results = matches([ 1, 2, 1 ], [ BIND('x'), ANY, BIND('x') ]); # is true.
+  my $results = matches([ 1, 2, 1 ], [ BIND('x'), ANY, BIND('x') ]); # TRUE
 
 C<BIND($name)> matches anything and remembers each match and its position with every C<BIND($name)> in C<$result->{'BIND'}{$name}>.  If C<BIND($name)> is not the same as the first value bound to C<BIND($name)> it does not match.  For example:
 
-  my $results = matches([ 1, 2, 3 ], [ BIND('x'), 2, BIND('x') ]); # is false: 3 != 1
+  my $results = matches([ 1, 2, 3 ], [ BIND('x'), 2, BIND('x') ]); # FALSE: 3 != 1
 
 C<COLLECT($name)> is similar to BIND but does not compare first bound values.
 
 C<REST> matches all remaining elements of an array or hash.
 
-  matches([ 1, 2, 3 ], [ 1, REST() ]); # is true.
-  matches({ 'a'=>1, 'b'=>1 }, { 'b'=>1, REST() => REST() }); # is true
+  matches([ 1, 2, 3 ], [ 1, REST() ]); # TRUE
+  matches({ 'a'=>1, 'b'=>1 }, { 'b'=>1, REST() => REST() }); # TRUE
 
 C<FIND> searches at all depths for matching subpatterns.
 
@@ -52,34 +57,196 @@ See the test script C<t/t1.t> in the package distribution for more pattern examp
 
 =head1 MATCH COLLECTIONS
 
-When a C<BIND> or C<COLLECT> matches a datum an entry is collect in C<$result->{BIND}> and C<$result->{COLLECT}>, respectively.
+When a C<BIND> or C<COLLECT> matches a datum, an entry is collected in C<$result->{BIND}> and C<$result->{COLLECT}>, respectively.  (This might change in the future)
 
 Each entry for the binding name is a hash containing C<'v'>, C<'p'> and C<'ps'> lists.  
 C<'v'> is a list of the value at each match.
 C<'p'> is a list describing where the corresponding match was found based on the root of the searchat each match.
 C<'ps'> is a list of code strings that describes where the match was for each match.
 
+=head1 SUBPATTERNS
+
+All patterns can have sub-patterns.  Most patterns match the ANDed results of their sub-patterns and their own behavior, first trying the sub-patterns before attempting to match the intrinsic behavior.  However, C<OR> and C<ANY> match any sub-patterns;
+
+For example:
+
+  match([ ['a', 1 ], ['b', 2], ['a', 3] ], EACH(COLLECT('x', ['a', ANY())))) # TRUE
+
+The above pattern means:
+
+=over 2
+  
+For EACH element in the root structure (an array):
+
+=over 2
+
+COLLECT each element, in C<'x'>, that is,
+
+=over 2
+
+An ARRAY of length 2 that starts with C<'a'>.
+ 
+=back
+
+=back
+
+=back
+
+On the other hand.
+
+  match( [ ['a', 1 ], ['b', 2], ['a', 3] ], ALL(COLLECT('x', [ 'a', ANY() ])) ) 
+  # IS FALSE
+
+Because the second root element (an array) does not start with C<'a'>.  But,
+
+  match( [ ['a', 1 ], ['a', 2], ['a', 3] ], ALL(COLLECT('x', [ 'a', ANY() ])) ) 
+  # IS TRUE
+
+The pattern below essentially does a flatten of the nested array:
+
+  match(
+    [ 1, 'x', 
+      [ 2, 'x', 
+        [ 3, 'x'], 
+        [ 4, 
+           [ 5, 
+             [ 'x' ] 
+           ],
+	  6
+        ] 
+      ] 
+    ], 
+    FIND(COLLECT('x', EXPR(q{! ref}))), 
+    { 'no_collect_path' => 1 }
+  );
+
+C<no_collect_path> causes C<COLLECT> and C<BIND>  to not collect any paths.
+
+
+=head1 MATCH SLICES
+
+Match slices are objects that contain slices of matched portions of a data structure.  This is useful for inflicting change into substructures matched by patterns like C<REST>.
+
+For example:
+
+  do {
+    my $a = [ 1, 2, 3, 4 ];
+    my $p = [ 1, ANY, REST(BIND('s')) ];
+    my $r = matches($a, $p); # 
+    ok($r); # TRUE
+    ok(Compare($r->{'BIND'}{'s'}{'v'}[0], [ 3, 4 ])); # TRUE
+    $p->[0] = 'x';
+    matches($a, [ 1, 2, 'x', 4 ]); # TRUE
+  }
+
+Hash match slices are generate for each key-value pair for a hash matched by C<EACH> and C<ALL>.  Each of these match slices can be matched as a hash with a single key->value pair.
+
+Match slices are useful for search and replace missions.
+
+=head1 VISITATION ADAPTERS
+
+By default Data::Match is blind to Perl object interfaces.  To instruct Data::Match to not traverse object implementation containers and honor object interfaces you must provide a visitation adaptor.  A visitation adaptor tells Data::Match what to traverse through an object interface and how to keep track of how it got through.
+
+For example:
+
+  package Foo;
+  sub new
+  {
+    my ($cls, %opts) = @_;
+    bless \%opts, $cls;
+  }
+  sub x { shift->{x}; }
+  sub parent { shift->{parent}; }
+  sub children { shift->{children}; }
+  sub add_child { 
+    my $self = shift; 
+    for my $c ( @_ ) { 
+      $c->{parent} = $self;
+    }
+    push(@{$self->{children}}, @_);
+  }
+
+
+  my $foos = [ map(new Foo('x' => $_), 1 .. 10) ];
+  for my $f ( @$foos ) { $f->add_child($foos->[rand($#$foo)); }
+
+  my $pat = FIND(COLLECT('Foo', ISA('Foo', { 'parent' => $foos->[0], REST() => REST() })));
+  $match->match($foos, $pat);
+
+The problem with the above example is: C<FIND> will not honor the interface of class Foo by default and will eventually find a Foo where C<$_->parent eq $foos->[0]> through all the parent and child links in the objects' implementation container.  To force Data::Match to honor an interface (or a subset of an interface) during C<FIND> traversal we create a 'find' adapter sub that will do the right thing.
+
+  my $opts = {
+    'find' => {
+       'Foo' => sub {
+	 my ($self, $visitor) = @_;
+
+         # Always do 'x'.
+         $visitor->($self->x, 'METHOD', 'x');
+
+	 # Optional children traversal.
+	 if ( $match->{'Foo_traverse_children'} ) {
+           $visitor->($self->children, 'METHOD', 'children');
+	 }
+
+	 # Optional parent traversal.
+	 if ( $match->{'Foo_traverse_parent'} ) {
+           $visitor->($self->parent, 'METHOD', 'parent');
+	 }
+       }
+     }
+  }
+  my $match = new Data::Match($opts);
+  $match = $match->match($foos, $pat);
+
+See C<t/t4.t> for more examples of visitation adaptors.
+
+=head1 DESIGN
+
+Data::Match employs a mostly-functional external interface since this module was inspired by a Lisp tutorial ("The Little Lisper", maybe) I read too many years ago; besides, pattern matching is largely recursively functional.  The optional control hashes and traverse adapter interfaces are better represented by an object interface so implemented a functional veneer over the core object interface.
+
+Internally, objects are used to represent the pattern primitives because most of the pattern primitives have common behavior.  There are a few design patterns that are particularly applicable in Data::Match: Visitor and Adapter.  Adapter is used to provide the extensiblity for the traversal of blessed structures such that Data::Match can honor the external interfaces of a class and not blindly violate encapsulation.  Visitor is the basis for some of the C<FIND> pattern implementation.  The C<Data::Match::Slice> classes that provide the match slices are probably a Veneer on the array and hash types through the tie meta-behaviors.
+
 =head1 CAVEATS
 
-Blessed structures are not traversed.  Circular data structures are not handled properly.  Does not have regex-like operators like '?', '*', '+'.  Should probably have interfaces to Data::DRef and Data::Walker. 
+=over 4
+
+=item *
+
+Does not have regex-like operators like '?', '*', '+'.  
+
+=item *
+
+Should probably have more interfaces with Data::DRef and Data::Walker.
+
+=item *
+
+The visitor adaptors do not use C<UNIVERSAL::isa> to search for the adapter is uses C<ref>.
+
+=item *
+
+Since hash keys do not retain blessedness (what was Larry thinking?) it is difficult to have patterns match keys without resorting to some bizarre regex instead of using C<isa>. 
+
+=back
 
 =head1 STATUS
 
-If you find this to be useful please contact the author.  This is beta software; all APIs, semantics and behavors are subject to change.
+If you find this to be useful please contact the author.  This is alpha software; all APIs, semantics and behavors are subject to change.
 
-=head1 INTERNALS
+=head1 INTERFACE
 
-This section describes the components of this module.
+This section describes the external interface of this module.
 
 =cut
+#'oh emacs, when will perl-mode recognize =pod?
 
 #########################################################################
+
 
 use strict;
 use warnings;
 
-our $VERSION = '0.02';
-our $REVISION = do { my @r = (q$Revision: 1.5 $ =~ /\d+/g); sprintf "%d." . "%02d" x $#r, @r };
+our $VERSION = '0.03';
+our $REVISION = do { my @r = (q$Revision: 1.8 $ =~ /\d+/g); sprintf "%d." . "%02d" x $#r, @r };
 
 our $PACKAGE = __PACKAGE__;
 
@@ -88,7 +255,24 @@ our @ISA = qw(Exporter);
 our @EXPORT = qw();
 
 our @export_func = qw(match matches match_path_str match_path_get match_path_ref);
-our @autoload_pat = qw(ANY AND OR NOT BIND COLLECT REGEX ISA REST EACH ALL FIND LENGTH EXPR);
+our @autoload_pat = 
+  qw(
+     ANY 
+     AND 
+     OR 
+     NOT 
+     BIND 
+     COLLECT 
+     REGEX 
+     ISA REF 
+     DEPTH 
+     REST 
+     EACH 
+     ALL 
+     FIND 
+     LENGTH 
+     EXPR
+     );
 our @export_pat = @autoload_pat;
 our @EXPORT_OK = (@export_func, @export_pat);
 our %EXPORT_TAGS = ( 
@@ -98,6 +282,7 @@ our %EXPORT_TAGS = (
 		     );
 
 use Data::Dumper;
+use Data::Compare;
 use Carp qw(confess);
 
 our $debug = 0;
@@ -129,9 +314,16 @@ sub AUTOLOAD
     #print "AUTOLOAD $AUTOLOAD: ", Data::Dumper->new([ \@_ ], [ qw(@_) ])->Indent(0)->Purity(1)->Terse(0)->Dump(), "\n\n";
     $code->(@_);
   } else {
+    warn "no autoload_pat{$pat}";
     $self->SUPER::AUTOLOAD(@_);
     die "no such method: $AUTOLOAD";
   }
+}
+
+
+sub DESTROY
+{
+  # NOTHING.
 }
 
 
@@ -139,21 +331,60 @@ sub AUTOLOAD
 
 
 #########################################################################
+# Instance initialization.
+#
+
+sub new
+{
+  my ($self, @opts) = @_;
+  my %opts = @opts & 1 ? ( %{$opts[0]}, @opts[1..$#opts]) : @opts;
+  (bless \%opts, $self)->defaults->initialize;
+}
 
 
-=head2 _match_ARRAY
+sub defaults
+{
+  shift;
+}
 
-Internal recursive match routine.  Assumes $results is initialized.
 
-=cut
+sub initialize
+{
+  shift;
+}
+
+
+#=head2 _self_or_instance
+#
+#Returns self if called as an instance method or a new instance if called as a class method.
+# 
+#=cut
+sub _self_or_instance
+{
+  my $self = shift;
+  # $DB::single = 1;
+  ref($self) ? $self : __PACKAGE__->new(@_);
+}
+
+
+
+#########################################################################
+# Low-level container match traversals.
+#
+
+#=head2 _match_ARRAY
+#
+#Internal recursive match routine.  Assumes $matchobj is initialized.
+#
+#=cut
 sub _match_ARRAY
 {
-  my ($x, $p, $results) = @_;
+  my ($self, $x, $p) = @_;
 
-  my $match = 0;
+  my $match;
 
-  ++ $results->{'depth'};
-  push(@{$results->{'path'}}, ref($x));
+  ++ $self->{'depth'};
+  push(@{$self->{'path'}}, 'ARRAY');
   
  ARRAY:
   {
@@ -162,57 +393,62 @@ sub _match_ARRAY
     # Each element must match.
     for my $i ( 0 .. $#$p ) {
       # [ 'x', 'y', REST ] matches [ 'x', 'y', 'z', '1', '2', '3' ]
-      if ( ! $results->{'disable_patterns'} && 
+      # Where SUBPAT in REST(SUBPAT) is bound to [ 'z', '1', '2', '3' ].
+      if ( ! $self->{'disable_patterns'} && 
 	 UNIVERSAL::isa($p->[$i], 'Data::Match::Pattern::REST') ) {
-	push(@{$results->{'path'}}, [$i, scalar @$x]);
+	push(@{$self->{'path'}}, [$i, scalar @$x]);
 
 	# Create an new array slice to match the rest of the array.
+	# The Slice::Array object will forward changes to
+	# the real array.
 	my $slice;
 	if ( 1 ) {
-	  $slice = new Data::Match::Slice::Array($x, $i, scalar @$x);
+	  $slice = Data::Match::Slice::Array->new($x, $i, scalar @$x);
 	} else {
 	  $slice = [ @{$x}[$i .. $#$x] ];
 	}
 
-	$match &&= $p->[$i]->_match_rest_array($slice, $results);
+	# Match REST's subpatterns against the REST slice.
+	$match &&= $p->[$i]->_match_rest_ARRAY($slice, $self);
 	
-	pop(@{$results->{'path'}});
+	pop(@{$self->{'path'}});
+
 	last ARRAY;
       }
       
-      push(@{$results->{'path'}}, $i);
+      push(@{$self->{'path'}}, $i);
       
-      $match = $i < @$x && _match($x->[$i], $p->[$i], $results);
+      $match = $i < @$x && $self->_match($x->[$i], $p->[$i]);
       
-      pop(@{$results->{'path'}});
+      pop(@{$self->{'path'}});
       
       last ARRAY unless $match;
     }
     
     $match &&= @$p == @$x;
   }
-      
-  -- $results->{'depth'};
-  pop(@{$results->{'path'}});
+
+  -- $self->{'depth'};
+  pop(@{$self->{'path'}});
 
   $match;
 }
 
 
 
-=head2 _match_HASH
-
-Internal recursive match routine.  Assumes $results is initialized.
-
-=cut
+#=head2 _match_HASH
+#
+#Internal recursive match routine.  Assumes $matchobj is initialized.
+#
+#=cut
 sub _match_HASH
 {
-  my ($x, $p, $results) = @_;
+  my ($self, $x, $p) = @_;
 
   my $match = 0;
 
-  ++ $results->{'depth'};
-  push(@{$results->{'path'}}, ref($x));
+  ++ $self->{'depth'};
+  push(@{$self->{'path'}}, 'HASH');
 	  
  HASH:
   {
@@ -225,18 +461,21 @@ sub _match_HASH
 
     for my $k ( keys %$p ) {
       # ANY in a pattern key matches any other elements.
-      if ( ! $results->{'disable_patterns'} && 
-	   $k =~ /^Data::Match::Pattern::ANY=/ ) {
+      if ( ! $self->{'disable_patterns'} && 
+	   (
+	    ($k =~ /^Data::Match::Pattern::ANY=/)              # unless grep(ref $_, keys %hash)
+	    || UNIVERSAL::isa($k, 'Data::Match::Pattern::ANY') # if grep($ref $_, keys %hash)
+	    )) {
 	if ( ! $any_key ++ ) {
 	  my $matches = 0;
 	  
 	  for my $xk ( keys %$x ) {
-	    push(@{$results->{'path'}}, $xk);
+	    push(@{$self->{'path'}}, $xk);
 
 	    ++ $matched_keys{$xk};
-	    ++ $matches if _match($x->{$xk}, $p->{$k}, $results);
+	    ++ $matches if $self->_match($x->{$xk}, $p->{$k});
 	    
-	    pop(@{$results->{'path'}});
+	    pop(@{$self->{'path'}});
 	    
 	    last unless $match;
 	  }
@@ -249,7 +488,7 @@ sub _match_HASH
       }
       
       # Rest in a pattern causes the rest to match.
-      if ( ! $results->{'disable_patterns'} && 
+      if ( ! $self->{'disable_patterns'} && 
 	   ! $rest_pat &&
 	 UNIVERSAL::isa($p->{$k}, 'Data::Match::Pattern::REST')
 	   ) {
@@ -258,12 +497,12 @@ sub _match_HASH
       }
       
       # If the key does not exist in pattern, no match.
-      push(@{$results->{'path'}}, $k);
+      push(@{$self->{'path'}}, $k);
       
       ++ $matched_keys{$k};
-      $match &&= exists $x->{$k} && _match($x->{$k}, $p->{$k}, $results);
+      $match &&= exists $x->{$k} && $self->_match($x->{$k}, $p->{$k});
       
-      pop(@{$results->{'path'}});
+      pop(@{$self->{'path'}});
       
       last HASH unless $match;
     }
@@ -276,66 +515,92 @@ sub _match_HASH
       # the values from $x for all the unmatched keys.
       my $slice;
       if ( 1 ) {
-	$slice = new Data::Match::Slice::Hash($x, \@rest_keys);
+	$slice = Data::Match::Slice::Hash->new($x, \@rest_keys);
       } else {
 	$slice = { };
 	@{$slice}{@rest_keys} = @{$x}{@rest_keys};
       }
 
       # See match_path_str().
-      push(@{$results->{'path'}}, \@rest_keys);
+      push(@{$self->{'path'}}, \@rest_keys);
 
       #$DB::single = 1;
-      $match &&= $rest_pat->_match_rest_hash($slice, $results);
+      $match &&= $rest_pat->_match_rest_HASH($slice, $self);
 
-      pop(@{$results->{'path'}});
+      pop(@{$self->{'path'}});
+    } else {
+      # Make sure they are the same length.
+      $match &&= (scalar values %$p) == (scalar values %$x) unless $any_key;
     }
-
-    # Make sure they are the same length.
-    $match &&= (scalar values %$p) == (scalar values %$x) unless $rest_pat or $any_key;
   }
 
-  -- $results->{'depth'};
-  pop(@{$results->{'path'}});
+  -- $self->{'depth'};
+  pop(@{$self->{'path'}});
 
   $match;
 }
 
 
-=head2 _match_SCALAR
-
-Internal recursive match routine.  Assumes $results is initialized.
-
-=cut
+#=head2 _match_SCALAR
+#
+#Internal recursive match routine.  Assumes $matchobj is initialized.
+#
+#=cut
 sub _match_SCALAR
 {
-  my ($x, $p, $results) = @_;
+  my ($self, $x, $p) = @_;
 
-  my $match = 0;
-
-  ++ $results->{'depth'};
-  push(@{$results->{'path'}}, ref($x));
+  ++ $self->{'depth'};
+  push(@{$self->{'path'}}, 'SCALAR');
 	  
-  push(@{$results->{'path'}}, undef); # 'emacs
-  $match = _match($$x, $$p, $results);
-  pop(@{$results->{'path'}});
+  push(@{$self->{'path'}}, undef); # 'emacs
+  my $match = $self->_match($$x, $$p);
+  pop(@{$self->{'path'}});
 
-  -- $results->{'depth'};
-  pop(@{$results->{'path'}});
+  -- $self->{'depth'};
+  pop(@{$self->{'path'}});
 
   $match;
 };
 
 
 
-=head2 _match
+#=head2 _match_path_push
+#
+#Internal recursive match routine.  Assumes $self is initialized.
+#
+#=cut
+sub _match_path_push
+{
+  my $self = shift;
+  ++ $self->{'depth'};
+  push(@{$self->{'path'}}, @_);
+}
 
-Internal recursive match routine.  Assumes $results is initialized.
 
-=cut
+#=head2 _match_path_pop
+#
+#Internal recursive match routine.  Assumes $self is initialized.
+#
+#=cut
+sub _match_path_pop
+{
+  my $self = shift;
+  # $DB::single = 1;
+  splice(@{$self->{'path'}}, -2);
+  -- $self->{'depth'};
+  confess "too many _match_path_pop" if $self->{'depth'} < 0;
+}
+
+
+#=head2 _match
+#
+#Internal recursive match routine.  Assumes $self is initialized.
+#
+#=cut
 sub _match
 {
-  my ($x, $p, $results) = @_;
+  my ($self, $x, $p) = @_;
 
   my $match = 0;
 
@@ -351,27 +616,42 @@ sub _match
     }
 
     # Is pattern a pattern?
-    elsif ( ! $results->{'disable_patterns'} && UNIVERSAL::isa($p, 'Data::Match::Pattern') ) {
+    elsif ( ! $self->{'disable_patterns'} && UNIVERSAL::isa($p, 'Data::Match::Pattern') ) {
       # Delegate match to pattern object.
-      $match = $p->match($x, $results);
+      $match = $p->match($x, $self);
     }
 
     # Handle deep structures.
     elsif ( ref($x) ) {
-      if ( ref($x) eq 'ARRAY' && ref($p) eq 'ARRAY' ) {
-	$match = _match_ARRAY($x, $p, $results);
+      # Acquire visitation lock.
+      if ( $self->{'visiting'}{$x} ++ ) {
+	$match = Compare($x, $p);
       }
-      elsif ( ref($x) eq 'HASH' && ref($p) eq 'HASH' ) {
-	$match = _match_HASH($x, $p, $results);
+      # Class-specific visit adaptor?
+      elsif ( my $visit = $self->{'match'}{ref($x)} ) {
+	# $match = 1;
+	my $visitor = sub {
+	  $match &&= $self->_match($_[0], $p);  #should this be ||= or &&=? 
+	};
+	$match = $visit->($x, $visitor);
       }
-      elsif ( ref($x) eq 'SCALAR' && ref($p) eq 'SCALAR' ) {
-	$match = _match_SCALAR($x, $p, $results);
+      # Array pattern template?
+      elsif ( UNIVERSAL::isa($x, 'ARRAY')  && UNIVERSAL::isa($p, 'ARRAY') ) {
+	$match = $self->_match_ARRAY($x, $p);
+      }
+      # Hash pattern template?
+      elsif ( UNIVERSAL::isa($x, 'HASH')   && UNIVERSAL::isa($p, 'HASH') ) {
+	$match = $self->_match_HASH($x, $p);
+      }
+      # Scalar ref pattern template?
+      elsif ( UNIVERSAL::isa($x, 'SCALAR') && UNIVERSAL::isa($p, 'SCALAR') ) {
+	$match = $self->_match_SCALAR($x, $p);
       }
       else {
 	# Extensible comparators?
-	if ( my $comparator = $results->{'compare'}{ref($x) || '*'} ) {
+	if ( my $comparator = $self->{'compare'}{ref($x) || '*'} ) {
 	  # Try a comparator.
-	  $match = $comparator->($x, $p, $results);
+	  $match = $comparator->($x, $p, $self);
 	} else {
 	  # Default to eq.
 	  $match = $x eq $p;
@@ -381,6 +661,9 @@ sub _match
       # Scalar eq.
       $match = $x eq $p;
     }
+
+    # Release visitation lock.
+    -- $self->{'visiting'}{$x};
   };
 
   #$DB::single = 1;
@@ -394,50 +677,105 @@ sub _match
 Default options for C<match>.
 
 =cut
-our %match_opts;
+our %match_opts
+  = (
+     #'collect_path_DRef' => 1,
+     #'collect_path_str' => 0,
+     #'no_collect_path' => 1.
+     );
 
-=head2 match
 
-Matches a structure against a pattern.  In a list context, return both the match success and results; in a scalar context returns the results hash if match succeeded or undef.
+=head2 _match_pre
 
-  my ($matched, $results) = match($thing, $p);
-  $results = match($thing, $p);
+Initialize the match object before pattern traversal.
 
 =cut
-sub match
+sub _match_pre
 {
-  my ($x, $p, $results, %opts) = @_;
-
-  # Initialize a container for the match results.
-  $results ||= { };
+  my ($self, $x, $p, $opts) = @_;
 
   # Install opts.
-  @{$results}{keys %match_opts} = values %match_opts;
-  @{$results}{keys %opts} = values %opts;
+  @{$self}{keys %match_opts} = values %match_opts;
+  @{$self}{keys %$opts} = values %$opts if ( $opts );
 
   # Initialize state.
-  $results->{'depth'} ||= 0;
-  $results->{'path'}  ||= [ ],
-  $results->{'root'}  ||= $x,
+  $self->{'depth'}    ||= 0;
+  $self->{'visiting'} ||= { };
+  $self->{'path'}     ||= [ ];
+  $self->{'root'}     ||= $x;
+  $self->{'pattern'}  ||= $p;
+  $self->{'_COLLECT'} ||= 'COLLECT';
+  $self->{'_BIND'}    ||= 'BIND';
+  
+  $self;
+}
 
-  # Start matching.
-  my $matches = _match($x, $p, $results);
+
+=head2 _match_post
+
+Initialize the match object before pattern traversal.
+
+=cut
+sub _match_post
+{
+  my ($self, $x, $p) = @_;
+
+  delete $self->{'visiting'} unless $self->{'keep_visiting'};
 
   # Post conditions.
   {
     no warnings;
 
-    confess "Expected results->{depth} == 0" unless $results->{'depth'} == 0;
-    confess "Expected results->{path} eq [ ]" unless ! @{$results->{'path'}};
-    confess "Expected results->{root} eq root" unless $results->{'root'} eq $x;
+    confess "Expected results->{depth} == 0" unless $self->{'depth'} == 0;
+    confess "Expected results->{path} eq [ ]" unless ! @{$self->{'path'}};
+    confess "Expected results->{root} eq root" unless $self->{'root'} eq $x;
+    confess "Expected results->{pattern} eq pattern" unless $self->{'pattern'} eq $p;
   }
+
+  $self;
+}
+
+
+=head2 execute
+
+Matches a structure against a pattern.  In a list context, returns both the match success and results; in a scalar context returns the results hash if match succeeded or undef.
+
+  use Data::Match;
+  my $obj = new Data::Match();
+  my $matched = $obj->execute($thing, $pattern);
+
+=cut
+sub execute
+{
+  my ($self, $x, $p) = @_;
+
+  $self->_match_pre($x, $p);
+  my $matches = $self->_match($x, $p);
+  $self->_match_post($x, $p);
 
   # Return results.
   if ( wantsarray ) {
-    return ($matches, $results);
+    return ($matches, $self);
   } else {
-    return $matches ? $results : undef;
+    return $matches ? $self : undef;
   }
+}
+
+
+=head2 match
+
+   match($thing, $pattern, @opts)
+
+it same as:
+
+   Data::Match->new(@opts)->execute($thing, $pattern);
+
+=cut
+sub match
+{
+  my ($x, $p, @opts) = @_;
+
+  __PACKAGE__->new(@opts)->execute($x, $p);
 }
 
 
@@ -448,9 +786,9 @@ Same as C<match> in scalar context.
 =cut
 sub matches
 {
-  my ($x, $p, $r, @opts) = @_;
+  my ($x, $p, @opts) = @_;
 
-  my ($match, $results) = match($x, $p, $r, @opts);
+  my ($match, $results) = match($x, $p, @opts);
 
   $match ? $results : undef;
 }
@@ -462,83 +800,6 @@ sub matches
 #
 
 
-=head2 match_path_get
-
-Returns the value pointing to the location for the match path in the root.
-
-  my $results = matches($thing, FIND(BIND('x', [ 'x', REST ])));
-  my $x = match_path_get($thing, $results->{'BIND'}{'x'}{'path'}[0]);
-
-The above example returns.
-
-=cut
-sub match_path_get
-{
-  my ($path, $root, $results) = @_;
-
-  my $ps = match_path_str($path, '$_[0]', $results);
-
-  # warn "ps = $ps" if ( 1 || $ps =~ /,/ );
-
-  my $pfunc = eval "sub { $ps; }";
-  die "$@: $ps" if $@;
-
-  $pfunc->($root);
-}
-
-
-
-=head2 match_path_set
-
-Returns the value pointing to the location for the match path in the root.
-
-  my $results = matches($thing, FIND(BIND('x', [ 'x', REST ])));
-  match_path_set($thing, $results->{'BIND'}{'x'}{'path'}[0], 'y');
-
-The above example replaces the first array found that starts with 'x' with 'y';
-
-=cut
-sub match_path_set
-{
-  my ($path, $root, $value, $results) = @_;
-
-  my $ps = match_path_str($path, '$_[0]', $results);
-
-  # warn "ps = $ps" if ( 1 || $ps =~ /,/ );
-
-  my $pfunc = eval "sub { $ps = \$_[1]; }";
-  die "$@: $ps" if $@;
-
-  $pfunc->($root, $value);
-}
-
-
-=head2 match_path_ref
-
-Returns a scalar ref pointing to the location for the match path in the root.
-
-  my $results = matches($thing, FIND(BIND('x', [ 'x', REST ])));
-  my $ref = match_path_ref($thing, $results->{'BIND'}{'x'}{'path'}[0]);
-  $$ref = 'y';
-
-The above example replaces the first array that starts with 'x' with 'y';
-
-=cut
-sub match_path_ref
-{
-  my ($path, $root, $results) = @_;
-
-  my $ps = match_path_str($path, '$_[0]', $results);
-
-  # warn "ps = $ps" if ( 1 || $ps =~ /,/ );
-
-  my $pfunc = eval "sub { \\{$ps}; }";
-  die "$@: $ps" if $@;
-
-  $pfunc->($root);
-}
-
-
 =head2 match_path_str
 
 Returns a perl expression that will generate code to point to the element of the path.
@@ -546,7 +807,7 @@ Returns a perl expression that will generate code to point to the element of the
 =cut
 sub match_path_str
 {
-  my ($path, $str, $results) = @_;
+  my ($path, $str, $matchobj) = @_;
 
   $str ||= '$_';
 
@@ -585,7 +846,7 @@ sub match_path_str
 	
 	$str = $str . "->$method(" . join(',', map('"'. quotemeta($_) . '"', @args)) . ')';
       } else {
-	confess "AIIIEE!!";
+	$str = $str . "->$ind()";
       }
     }
     else {
@@ -594,6 +855,138 @@ sub match_path_str
   }
 
   $str;
+}
+
+
+
+=head2 match_path_DRef_path
+
+Returns a string suitable for Data::DRef.
+
+=cut
+sub match_path_DRef_path
+{
+  my ($path, $str, $matchobj, $sep) = @_;
+
+  $str ||= '';
+  $sep ||= $Data::DRef::sep || '.';
+
+  my @path = @$path;
+
+  while ( @path ) {
+    my $ref = shift @path;
+    my $ind = shift @path;
+
+    if ( $ref eq 'ARRAY' ) {
+      if ( ref($ind) eq 'ARRAY' ) {
+	# Not supported by DRef.
+	$str .= $sep . '[' . $ind->[0] . '..' . ($ind->[1] - 1) . ']';
+      } else {
+	$str .= $sep . $ind;
+      }
+    }
+    elsif ( $ref eq 'HASH' ) {
+      if ( ref($ind) eq 'ARRAY' ) {
+	# Not supported by DRef.
+	$str .= $sep . '{' . join(',', @$ind->[0]) . '}';
+      } else {
+	$str .= $sep . $ind;
+      }
+    }
+    elsif ( $ref eq 'SCALAR' ) {
+      # Not supported by DRef.
+      $str .= $sep . '$'; #'emacs
+    }
+    elsif ( $ref eq 'METHOD' ) {
+      # Not supported by DRef.
+      confess "Ugh $ref";
+    }
+    else {
+      # Not supported by DRef.
+      confess "Ugh $ref";
+    }
+  }
+
+  $str =~ s/^$sep//;
+
+  $str;
+}
+
+
+=head2 match_path_get
+
+Returns the value pointing to the location for the match path in the root.
+
+  my $results = matches($thing, FIND(BIND('x', [ 'x', REST ])));
+  my $x = match_path_get($thing, $results->{'BIND'}{'x'}{'p'}[0]);
+
+The above example returns the first array that begins with C<'x'>.
+
+=cut
+sub match_path_get
+{
+  my ($path, $root, $results) = @_;
+
+  my $ps = match_path_str($path, '$_[0]', $results);
+
+  # warn "ps = $ps" if ( 1 || $ps =~ /,/ );
+
+  my $pfunc = eval "sub { $ps; }";
+  die "$@: $ps" if $@;
+
+  $pfunc->($root);
+}
+
+
+
+=head2 match_path_set
+
+Returns the value pointing to the location for the match path in the root.
+
+  my $results = matches($thing, FIND(BIND('x', [ 'x', REST ])));
+  match_path_set($thing, $results->{'BIND'}{'x'}{'p'}[0], 'y');
+
+The above example replaces the first array found that starts with 'x' with 'y';
+
+=cut
+sub match_path_set
+{
+  my ($path, $root, $value, $results) = @_;
+
+  my $ps = match_path_str($path, '$_[0]', $results);
+
+  # warn "ps = $ps" if ( 1 || $ps =~ /,/ );
+
+  my $pfunc = eval "sub { $ps = \$_[1]; }";
+  die "$@: $ps" if $@;
+
+  $pfunc->($root, $value);
+}
+
+
+=head2 match_path_ref
+
+Returns a scalar ref pointing to the location for the match path in the root.
+
+  my $results = matches($thing, FIND(BIND('x', [ 'x', REST ])));
+  my $ref = match_path_ref($thing, $results->{'BIND'}{'x'}{'p'}[0]);
+  $$ref = 'y';
+
+The above example replaces the first array that starts with 'x' with 'y';
+
+=cut
+sub match_path_ref
+{
+  my ($path, $root, $results) = @_;
+
+  my $ps = match_path_str($path, '$_[0]', $results);
+
+  # warn "ps = $ps" if ( 1 || $ps =~ /,/ );
+
+  my $pfunc = eval "sub { \\{$ps}; }";
+  die "$@: $ps" if $@;
+
+  $pfunc->($root);
 }
 
 
@@ -620,7 +1013,7 @@ sub _is_valid
 {
   my $self = shift;
 
-  confess("INVALID " . ref($self) . ": expect at least " . $self->subpattern_offset . " elements")
+  confess("INVALID " . ref($self) . ": expected at least " . $self->subpattern_offset . " elements")
     unless @$self >= $self->subpattern_offset;
 
   $self;
@@ -631,10 +1024,10 @@ sub subpattern_offset { 0; }
 
 sub match_and
 {
-  my ($self, $x, $results) = @_;
+  my ($self, $x, $matchobj) = @_;
 
   for my $i ( $self->subpattern_offset .. $#$self ) {
-    return 0 unless Data::Match::_match($x, $self->[$i], $results);
+    return 0 unless $matchobj->_match($x, $self->[$i]);
   }
 
   1;
@@ -643,10 +1036,10 @@ sub match_and
 
 sub match_or
 {
-  my ($self, $x, $results) = @_;
+  my ($self, $x, $matchobj) = @_;
 
   for my $i ( $self->subpattern_offset .. $#$self ) {
-    return 1 if Data::Match::_match($x, $self->[$i], $results);
+    return 1 if $matchobj->_match($x, $self->[$i]);
   }
 
   0;
@@ -658,6 +1051,7 @@ sub match_or
 
 ##################################################
 
+
 package Data::Match::Pattern::AND;
 
 our @ISA = qw(Data::Match::Pattern);
@@ -665,20 +1059,22 @@ our @ISA = qw(Data::Match::Pattern);
 
 ##################################################
 
+
 package Data::Match::Pattern::NOT;
 
 our @ISA = qw(Data::Match::Pattern);
 
 sub match
 {
-  my ($self, $x, $results) = @_;
+  my ($self, $x, $matchobj) = @_;
 
   # $DB::single = 1;
-  ! ((scalar @$self) ? $self->match_and($x, $results) : $x);
+  ! ((scalar @$self) ? $self->match_and($x, $matchobj) : $x);
 }
 
 
 ##################################################
+
 
 package Data::Match::Pattern::ANY;
 
@@ -686,14 +1082,14 @@ our @ISA = qw(Data::Match::Pattern);
 
 sub match 
 {
-  my ($self, $x, $results) = @_;
+  my ($self, $x, $matchobj) = @_;
 
   #$DB::single = 1;
   # ANY always matches.
 
   if ( @{$self} ) {
     # Do subpatterns.
-    $self->match_or($x, $results);
+    $self->match_or($x, $matchobj);
   } else {
     1;
   }
@@ -701,6 +1097,7 @@ sub match
 
 
 ##################################################
+
 
 package Data::Match::Pattern::COLLECT;
 
@@ -714,29 +1111,37 @@ sub binding { $_[0]->[0]; };
 
 sub _collect
 {
-  my ($self, $x, $results, $binding) = @_;
+  my ($self, $x, $matchobj, $binding) = @_;
 
   push(@{$binding->{'v'}}, $x );
-  my $path = [ @{$results->{'path'}} ];
-  push(@{$binding->{'p'}}, $path) ;# if ( $results->{'collect_path'} );
-  push(@{$binding->{'ps'}}, Data::Match::match_path_str($path, undef, $results)) if ( $results->{'collect_pathstr'} );
+
+  my $path = [ @{$matchobj->{'path'}} ];
+
+  push(@{$binding->{'p'}}, $path) 
+    unless $matchobj->{'no_collect_path'};
+
+  push(@{$binding->{'ps'}}, Data::Match::match_path_str($path, undef, $matchobj)) 
+    if ( $matchobj->{'collect_path_str'} );
+
+  push(@{$binding->{'pdr'}}, Data::Match::match_path_DRef_path($path, undef, $matchobj)) 
+    if ( $matchobj->{'collect_path_DRef'} );
 }
 
 
 sub match 
 { 
-  my ($self, $x, $results) = @_;
+  my ($self, $x, $matchobj) = @_;
 
   # warn "MATCH($self->[0])";
 
   # $DB::single = 1;
   
   # Do subpatterns.
-  return 0 unless $self->match_and($x, $results);
+  return 0 unless $self->match_and($x, $matchobj);
 
-  my $binding = $results->{'COLLECT'}{$self->[0]} ||= { };
+  my $binding = $matchobj->{$matchobj->{'_COLLECT'}}{$self->[0]} ||= { };
 
-  $self->_collect($x, $results, $binding);
+  $self->_collect($x, $matchobj, $binding);
 
   #$DB::single = 1;
   1;
@@ -758,26 +1163,26 @@ sub binding { $_[0]->[0]; };
 
 sub match 
 { 
-  my ($self, $x, $results) = @_;
+  my ($self, $x, $matchobj) = @_;
 
   # warn "MATCH($self->[0])";
 
   # $DB::single = 1;
 
   # Do subpatterns.
-  return 0 unless $self->match_and($x, $results);
+  return 0 unless $self->match_and($x, $matchobj);
 
-  my $binding = $results->{'BIND'}{$self->[0]};
+  my $binding = $matchobj->{$matchobj->{'_BIND'}}{$self->[0]};
 
   if ( $binding ) {
     #$DB::single = 1;
     if ( Compare($binding->{'v'}[0], $x) ) {
-      $self->_collect($x, $results, $binding);
+      $self->_collect($x, $matchobj, $binding);
     } else {
       return 0;
     }
   } else {
-    $self->_collect($x, $results, $results->{'BIND'}{$self->[0]} = {});
+    $self->_collect($x, $matchobj, $matchobj->{$matchobj->{'_BIND'}}{$self->[0]} = {});
   }
 
   1;
@@ -795,12 +1200,12 @@ sub subpattern_offset { 1; };
 
 sub match 
 {
-  my ($self, $x, $results) = @_;
+  my ($self, $x, $matchobj) = @_;
 
   # $DB::single = 1;
   
   # Note: do not check that it is not a ref incase the object can be coerced into a string.
-  ($x =~ /$self->[0]/sx) && $self->match_and($x, $results); 
+  ($x =~ /$self->[0]/sx) && $self->match_and($x, $matchobj); 
 }
 
 
@@ -815,9 +1220,46 @@ sub subpattern_offset { 1; };
 
 sub match 
 {
-  my ($self, $x, $results) = @_;
+  my ($self, $x, $matchobj) = @_;
 
-  UNIVERSAL::isa($x, $self->[0]) and $self->match_and($x, $results);
+  UNIVERSAL::isa($x, $self->[0]) and $self->match_and($x, $matchobj);
+}
+
+
+##################################################
+
+
+package Data::Match::Pattern::REF;
+
+our @ISA = qw(Data::Match::Pattern);
+
+sub subpattern_offset { 0; };
+
+sub match 
+{
+  my ($self, $x, $matchobj) = @_;
+
+  $x = ref($x);
+  $x && $self->match_and($x, $matchobj);
+}
+
+
+##################################################
+
+
+package Data::Match::Pattern::DEPTH;
+
+our @ISA = qw(Data::Match::Pattern);
+
+sub subpattern_offset { 0; };
+
+sub match 
+{
+  my ($self, $x, $matchobj) = @_;
+
+  $x = $matchobj->{'depth'};
+
+  $self->match_and($x, $matchobj);
 }
 
 
@@ -832,14 +1274,19 @@ sub subpattern_offset { 0; };
 
 sub match 
 {
-  my ($self, $x, $results) = @_;
+  my ($self, $x, $matchobj) = @_;
+
+  no warnings;
 
   if ( ref($x) ) {
-    if ( ref($x) eq 'ARRAY' ) {
+    if (    UNIVERSAL::isa($x, 'ARRAY') ) {
       $x = @$x;
     }
-    elsif ( ref($x) eq 'HASH' ) {
+    elsif ( UNIVERSAL::isa($x, 'HASH') ) {
       $x = %$x;
+    }
+    elsif ( UNIVERSAL::isa($x, 'SCALAR') ) {
+      $x = $x ? 1 : 0;
     }
     else {
       $x = undef;
@@ -848,7 +1295,7 @@ sub match
     $x = length $x;
   }
 
-  @$self ? $self->match_and($x, $results) : $x;
+  @$self ? $self->match_and($x, $matchobj) : $x;
 }
 
 
@@ -870,10 +1317,10 @@ sub initialize
 
   # $DB::single = 1;
 
-  # Make room for EXPR.
+  # Make room for EXPR sub.
   splice(@$self, 1, 0, 'UGH');
 
-  if ( ref($self->[0]) eq 'CODE' ) {
+  if ( UNIVERSAL::isa($self->[0], 'CODE') ) {
     $self->[1] = $self->[0];
   } else {
     my $expr = $self->[0];
@@ -887,11 +1334,11 @@ sub initialize
 
 sub match 
 {
-  my ($self, $x, $results) = @_;
+  my ($self, $x, $matchobj) = @_;
 
-  $DB::single = 1;
+  # $DB::single = 1;
 
-  $self->[1]->($x, $results, $self) && $self->match_and($x, $results);
+  $self->[1]->($x, $matchobj, $self) && $self->match_and($x, $matchobj);
 }
 
 
@@ -910,19 +1357,19 @@ sub match
 }
 
 
-sub _match_rest_array
+sub _match_rest_ARRAY
 {
-  my ($self, $x, $results) = @_;
+  my ($self, $x, $matchobj) = @_;
 
-  ref($x) && $self->match_and($x, $results);
+  ref($x) && $self->match_and($x, $matchobj);
 }
 
 
-sub _match_rest_hash
+sub _match_rest_HASH
 {
-  my ($self, $x, $results) = @_;
+  my ($self, $x, $matchobj) = @_;
 
-  ref($x) && $self->match_and($x, $results);
+  ref($x) && $self->match_and($x, $matchobj);
 }
 
 
@@ -934,90 +1381,94 @@ package Data::Match::Pattern::EACH;
 our @ISA = qw(Data::Match::Pattern);
 
 
-sub _match_each_array
+sub _match_each_ARRAY
 {
-  my ($self, $x, $results, $matches) = @_;
+  my ($self, $x, $matchobj, $matches) = @_;
 
-  ++ $results->{'depth'};
-  push(@{$results->{'path'}}, ref($x));
+  ++ $matchobj->{'depth'};
+  push(@{$matchobj->{'path'}}, 'ARRAY');
   
   my $i = -1;
   for my $e ( @$x ) {
-    push(@{$results->{'path'}}, ++ $i);
-    ++ $$matches if $self->match_and($e, $results);
-    pop(@{$results->{'path'}});
+    push(@{$matchobj->{'path'}}, ++ $i);
+    ++ $$matches if $self->match_and($e, $matchobj);
+    pop(@{$matchobj->{'path'}});
   }
   
-  pop(@{$results->{'path'}});
-  -- $results->{'depth'};
+  pop(@{$matchobj->{'path'}});
+  -- $matchobj->{'depth'};
 }
 
 
-sub _match_each_hash
+sub _match_each_HASH
 {
-  my ($self, $x, $results, $matches) = @_;
+  my ($self, $x, $matchobj, $matches) = @_;
 
-  ++ $results->{'depth'};
-  push(@{$results->{'path'}}, ref($x));
+  ++ $matchobj->{'depth'};
+  push(@{$matchobj->{'path'}}, 'HASH');
   
   for my $k ( keys %$x ) {
     my @k = ( $k );
 
     # We compensate the path for hash slice.
-    push(@{$results->{'path'}}, \@k);
+    push(@{$matchobj->{'path'}}, \@k);
     
     # Create a temporary hash slice.
     # because we are matching EACH element of the hash.
     my $slice;
     if ( 1 ) {
-      $slice = new Data::Match::Slice::Hash($x, \@k);
+      $slice = Data::Match::Slice::Hash->new($x, \@k);
     } else {
       $slice = { $k => $x->{$k} };
     }
 
-    ++ $$matches if $self->match_and($slice, $results);
+    ++ $$matches if $self->match_and($slice, $matchobj);
     
-    pop(@{$results->{'path'}});
+    pop(@{$matchobj->{'path'}});
   }
   
-  pop(@{$results->{'path'}});
-  -- $results->{'depth'};
+  pop(@{$matchobj->{'path'}});
+  -- $matchobj->{'depth'};
 }
 
 
-sub _match_each_scalar
+sub _match_each_SCALAR
 {
-  my ($self, $x, $results, $matches) = @_;
+  my ($self, $x, $matchobj, $matches) = @_;
 
-  ++ $results->{'depth'};
-  push(@{$results->{'path'}}, ref($x), undef);
+  ++ $matchobj->{'depth'};
+  push(@{$matchobj->{'path'}}, 'SCALAR', undef);
   
-  ++ $$matches if $self->match_and($$x, $results);
+  ++ $$matches if $self->match_and($$x, $matchobj);
   
-  pop(@{$results->{'path'}});
-  pop(@{$results->{'path'}});
-  -- $results->{'depth'};
+  pop(@{$matchobj->{'path'}});
+  pop(@{$matchobj->{'path'}});
+  -- $matchobj->{'depth'};
 }
 
 
 sub _match_each
 {
-  my ($self, $x, $results, $matches) = @_;
+  my ($self, $x, $matchobj, $matches) = @_;
 
   # Traverse.
   if ( ref($x) ) {
-    if ( ref($x) eq 'ARRAY' ) {
-      $self->_match_each_array($x, $results, $matches);
+    if ( my $eacher = $matchobj->{'each'}{ref($x)} ) {
+      my $visitor = sub { ++ $$matches if ( $self->_match_and($_[0], $matchobj) ); };
+      $eacher->($x, $visitor);
     }
-    elsif ( ref($x) eq 'HASH' ) {
-      $self->_match_each_hash($x, $results, $matches);
+    elsif (    UNIVERSAL::isa($x, 'ARRAY') ) {
+      $self->_match_each_ARRAY($x, $matchobj, $matches);
     }
-    elsif ( ref($x) eq 'SCALAR' ) {
-      $self->_match_each_scalar($x, $results, $matches);
+    elsif ( UNIVERSAL::isa($x, 'HASH') ) {
+      $self->_match_each_HASH($x, $matchobj, $matches);
+    }
+    elsif ( UNIVERSAL::isa($x, 'SCALAR') ) {
+      $self->_match_each_SCALAR($x, $matchobj, $matches);
     }
     else {
       # Try to match it explicitly.
-      ++ $$matches if $self->match_and($x, $results);
+      ++ $$matches if $self->match_and($x, $matchobj);
     }
   }
 }
@@ -1025,11 +1476,11 @@ sub _match_each
 
 sub match
 {
-  my ($self, $x, $results) = @_;
+  my ($self, $x, $matchobj) = @_;
 
   my $matches = 0;
 
-  $self->_match_each($x, $results, \$matches);
+  $self->_match_each($x, $matchobj, \$matches);
 
   $matches;
 }
@@ -1045,22 +1496,22 @@ our @ISA = qw(Data::Match::Pattern::EACH);
 
 sub match
 {
-  my ($self, $x, $results) = @_;
+  my ($self, $x, $matchobj) = @_;
 
   my $matches = 0;
 
   my $expected = $self;
 
-  if ( ref($x) eq 'ARRAY' ) {
+  if ( UNIVERSAL::isa($x, 'ARRAY') ) {
     $expected = scalar @$x;
   }
-  elsif ( ref($x) eq 'HASH' ) {
+  elsif ( UNIVERSAL::isa($x, 'HASH') ) {
     $expected = scalar %$x;
   } else {
     $expected = -1;
   }
 
-  $self->_match_each($x, $results, \$matches);
+  $self->_match_each($x, $matchobj, \$matches);
 
   $matches == $expected;
 }
@@ -1074,74 +1525,97 @@ package Data::Match::Pattern::FIND;
 
 our @ISA = qw(Data::Match::Pattern);
 
+
+sub _match_find_ARRAY
+{
+  my ($self, $x, $matchobj, $matches, $visited) = @_;
+
+  my $i = -1;
+  for my $e ( @$x ) {
+    push(@{$matchobj->{'path'}}, ++ $i);
+    
+    $self->_match_find($e, $matchobj, $matches, $visited);
+    
+    pop(@{$matchobj->{'path'}});
+  }
+}
+
+
+sub _match_find_HASH
+{
+  my ($self, $x, $matchobj, $matches, $visited) = @_;
+
+  for my $k ( keys %$x ) {
+    
+    push(@{$matchobj->{'path'}}, [ $k ]);
+    
+    # This needs a new Slice class.
+    $self->_match_find($k, $matchobj, $matches); # HUH?
+    
+    pop(@{$matchobj->{'path'}});
+    
+    push(@{$matchobj->{'path'}}, $k);
+    
+    $self->_match_find($x->{$k}, $matchobj, $matches, $visited);
+    
+    pop(@{$matchobj->{'path'}});
+  }
+}
+
+
 sub _match_find
 {
-  my ($self, $x, $results, $matches) = @_;
+  my ($self, $x, $matchobj, $matches, $visited) = @_;
 
   # Does this match directly? 
-  if ( $self->match_and($x, $results) ) {
-    ++ $$matches;
-  }
+  ++ $$matches if ( $self->match_and($x, $matchobj) );
 
   # Traverse.
   if ( ref($x) ) {
+
+    return if ( $visited->{$x} ++ );
+
     # $DB::single = 1;
 
-    if ( ref($x) eq 'ARRAY' ) {
-      ++ $results->{'depth'};
-      push(@{$results->{'path'}}, ref($x));
-
-      my $i = -1;
-      for my $e ( @$x ) {
-	push(@{$results->{'path'}}, ++ $i);
-
-	$self->_match_find($e, $results, $matches);
-
-	pop(@{$results->{'path'}});
-      }
-
-      pop(@{$results->{'path'}});
-      -- $results->{'depth'};
+    if ( my $visit = ($matchobj->{'find'}{ref($x)} || $matchobj->{'visit'}{ref($x)}) ) {
+      my $visitor = sub { 
+	my $thing = shift;
+	$matchobj->_match_path_push(@_) if @_;
+	$self->_match_find($thing, $matchobj, $matches, $visited);
+	$matchobj->_match_path_pop if @_;
+      };
+      $visit->($x, $visitor, $matchobj);
     }
-    elsif ( ref($x) eq 'HASH' ) {
-      ++ $results->{'depth'};
-      push(@{$results->{'path'}}, ref($x));
+    elsif ( UNIVERSAL::isa($x, 'ARRAY') ) {
+      ++ $matchobj->{'depth'};
+      push(@{$matchobj->{'path'}}, 'ARRAY');
 
-      for my $k ( keys %$x ) {
-	my $v = $x->{$k};
-	push(@{$results->{'path'}}, $k);
+      $self->_match_find_ARRAY($x, $matchobj, $matches, $visited);
 
-	$self->_match_find($k, $results, $matches);
-
-	pop(@{$results->{'path'}});
-      }
-
-      pop(@{$results->{'path'}});
-      -- $results->{'depth'};
+      pop(@{$matchobj->{'path'}});
+      -- $matchobj->{'depth'};
     }
-    elsif ( ref($x) eq 'SCALAR' ) {
-      ++ $results->{'depth'};
-      push(@{$results->{'path'}}, ref($x));
-      push(@{$results->{'path'}}, undef);
+    elsif ( UNIVERSAL::isa($x, 'HASH') ) {
+      ++ $matchobj->{'depth'};
+      push(@{$matchobj->{'path'}}, 'HASH');
 
-      $self->_match_find($$x, $results, $matches);
+      $self->_match_find_HASH($x, $matchobj, $matches, $visited);
 
-      pop(@{$results->{'path'}});
-      pop(@{$results->{'path'}});
-      -- $results->{'depth'};
+      pop(@{$matchobj->{'path'}});
+      -- $matchobj->{'depth'};
+    }
+    elsif ( UNIVERSAL::isa($x, 'SCALAR') ) {
+      ++ $matchobj->{'depth'};
+      push(@{$matchobj->{'path'}}, 'SCALAR', undef);
+
+      $self->_match_find($$x, $matchobj, $matches, $visited);
+
+      pop(@{$matchobj->{'path'}});
+      pop(@{$matchobj->{'path'}});
+      -- $matchobj->{'depth'};
     }
     else {
-      # Extensible traveral.
-      if ( my $traverser = $results->{'traverse'}{ref($x) || '*'} ) {
-	++ $results->{'depth'};
-	push(@{$results->{'path'}}, 'X', ref($x));
-  
-	$traverser->($x, sub { $self->match_and($_[0], $results); });
-
-	pop(@{$results->{'path'}});
-	pop(@{$results->{'path'}});
-	-- $results->{'depth'};
-      }
+      warn "Huh?";
     }
   }
 }
@@ -1149,11 +1623,11 @@ sub _match_find
 
 sub match
 {
-  my ($self, $x, $results) = @_;
+  my ($self, $x, $matchobj) = @_;
 
   my $matches = 0;
 
-  $self->_match_find($x, $results, \$matches);
+  $self->_match_find($x, $matchobj, \$matches, { });
 
   $matches;
 }
@@ -1179,6 +1653,7 @@ sub TIEARRAY
 {
   my ($cls, $src, $from, $to) = @_;
   $DB::single = $debug;
+  die "$src must be ARRAY" unless UNIVERSAL::isa($src, 'ARRAY');
   $from = 0 unless defined $from;
   $to = @$src unless defined $to;
   die "slice must be $from <= $to" unless $from <= $to;
@@ -1287,7 +1762,9 @@ sub TIEHASH
 {
   my ($cls, $src, $keys) = @_;
   $DB::single = $debug;
-  bless [ $src, { map(($_, $_), @$keys) } ], $cls;
+  die "src $src must be a HASH" unless UNIVERSAL::isa($src, 'HASH');
+  die "keys $keys must be an ARRAY" unless UNIVERSAL::isa($keys, 'ARRAY');
+  bless [ $src, { map(($_, 1), @$keys) } ], $cls;
 }
 
 
@@ -1340,15 +1817,19 @@ sub NEXTKEY
 
 =head1 VERSION
 
-Version 0.02, $Revision: 1.5 $.
+Version 0.03, $Revision: 1.8 $.
 
 =head1 AUTHOR
 
 Kurt A. Stephens <kurtstephens@acm.org>
 
+=head1 COPYRIGHT
+
+Copyright (c) 2001, Kurt A. Stephens and ION, INC.
+
 =head1 SEE ALSO
 
-L<perl>, L<Data::Compare>, L<Data::Dumper>, L<Data::DRef>, L<Data::Walker>.
+L<perl>, L<Array::PatternMatcher>, L<Data::Compare>, L<Data::Dumper>, L<Data::DRef>, L<Data::Walker>.
 
 =cut
 

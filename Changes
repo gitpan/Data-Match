@@ -11,3 +11,17 @@ Revision history for Perl extension Data::Match.
           Added more tests.
           Standard pattern operators are AUTOLOADED.
 	  Use Data::Compare for BIND test.
+
+0.03  2001/12/27
+	- Traversal is based on UNIVERSAL::isa($x, ...) instead of ref($x).
+	- Path element type generation is based on UNIVERSAL::isa.
+	- Added DEPTH pattern.
+	- Added REF pattern.
+	- MATCH has circular visitation guard.
+	- Added match_path_DRef_path().
+	- Better matching of circular data.
+	- Added object-oriented inteface.
+	- Added visitor adaptors.
+	- SEE ALSO Array::PatternMatcher.
+
+$Id: Changes,v 1.6 2001/12/28 03:56:43 stephens Exp $

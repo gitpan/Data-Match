@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 
-# $Id: t3.t,v 1.1 2001/12/24 08:27:20 stephens Exp $
+# $Id: t3.t,v 1.2 2001/12/28 03:56:43 stephens Exp $
 
 # Test for Data::Match::Slice::{Array,Hash}
 
@@ -25,7 +25,7 @@ my $x = matches(\@a, [ 0, 1, 2, REST(BIND('x')) ]);
 
 #0
 ok( $x);
-ok( ref($x) eq 'HASH' );
+ok( UNIVERSAL::isa($x, 'HASH') );
 ok( $x->{'BIND'} );
 ok( $x->{'BIND'}{'x'} );
 ok( $x->{'BIND'}{'x'}{'v'} );

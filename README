@@ -1,4 +1,4 @@
-Data/Match version 0.01
+Data/Match version 0.03
 =======================
 
 The README is used to introduce the module and provide instructions on
@@ -26,6 +26,7 @@ DEPENDENCIES
 This module requires these other modules and libraries:
 
    Data::Dumper
+   Data::Compare
 
 COPYRIGHT AND LICENCE
 
@@ -33,5 +34,7 @@ Put the correct copyright and licence information here.
 
 Copyright (C) 2001 Kurt Stephens.
 
+REVISION
 
+$Id: README,v 1.2 2001/12/24 10:07:23 stephens Exp $
 
