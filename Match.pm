@@ -265,8 +265,8 @@ This section describes the external interface of this module.
 use strict;
 use warnings;
 
-our $VERSION = '0.05';
-our $REVISION = do { my @r = (q$Revision: 1.11 $ =~ /\d+/g); sprintf "%d." . "%02d" x $#r, @r };
+our $VERSION = '0.06';
+our $REVISION = do { my @r = (q$Revision: 1.12 $ =~ /\d+/g); sprintf "%d." . "%02d" x $#r, @r };
 
 our $PACKAGE = __PACKAGE__;
 
@@ -2055,7 +2055,7 @@ sub NEXTKEY
 
 =head1 VERSION
 
-Version 0.05, $Revision: 1.11 $.
+Version 0.05, $Revision: 1.12 $.
 
 =head1 AUTHOR
 

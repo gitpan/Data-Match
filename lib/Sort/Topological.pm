@@ -1,4 +1,3 @@
-
 package Sort::Topological;
 
 #########################################################################
@@ -76,8 +75,8 @@ This section describes the external interface of this module.
 use strict;
 use warnings;
 
-our $VERSION = '0.01';
-our $REVISION = do { my @r = (q$Revision: 1.1 $ =~ /\d+/g); sprintf "%d." . "%02d" x $#r, @r };
+our $VERSION = '0.02';
+our $REVISION = do { my @r = (q$Revision: 1.2 $ =~ /\d+/g); sprintf "%d." . "%02d" x $#r, @r };
 
 our $PACKAGE = __PACKAGE__;
 
@@ -137,7 +136,7 @@ sub toposort
   } @$in;
 
   # Return array or array ref.
-  wantsarray ? @out : \@out;
+  wantarray ? @out : \@out;
 }
 
 
@@ -224,7 +223,7 @@ sub UNIT_TEST
 
 =head1 VERSION
 
-Version 0.01, $Revision: 1.1 $.
+Version 0.01, $Revision: 1.2 $.
 
 =head1 AUTHOR
 
