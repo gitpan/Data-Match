@@ -24,4 +24,12 @@ Revision history for Perl extension Data::Match.
 	- Added visitor adaptors.
 	- SEE ALSO Array::PatternMatcher.
 
-$Id: Changes,v 1.6 2001/12/28 03:56:43 stephens Exp $
+0.04  2001/12/28
+	- 'wantarray' not 'wantsarray'!
+	- Added prelimiary RANG operators for '*', '+', '?' and '{}'.
+	- match_path_*() now use object interface.
+	- Cleaned up documentation.
+	- use String::Escape::printable for quoting instead of quotemeta.
+	- Added emacs local variable blocks.
+
+$Id: Changes,v 1.8 2002/04/22 06:36:58 stephens Exp $

@@ -1,13 +1,13 @@
 #!/usr/bin/perl
 
-# $Id: t1.t,v 1.6 2001/12/28 03:54:45 stephens Exp $
+# $Id: t1.t,v 1.8 2002/12/17 22:30:30 stephens Exp $
 
 use strict;
 use Test;
 
 my @tests;
 my $n_tests;
-my $verbose = do { no warnings; $ENV{TEST_VERBOSE} > 1 };
+my $verbose = do { no warnings; $ENV{'TEST_VERBOSE'} > 1 };
 
 BEGIN { 
   print join(', ', @ARGV), "\n";
@@ -147,6 +147,7 @@ my $tests = q{
 	   { 'no_collect_path' => 1 }
 	   );
 
+    # circular structures
     do {
       my $x = [ 1, 2, [ 1, 2 ], 3 ]; $x->[2][1] = $x; #
       match($x, BIND('x', [ ANY, ANY, [ ANY, ANY ], ANY ]) ); #
@@ -157,15 +158,37 @@ my $tests = q{
       match($x, BIND('x', [ ANY, ANY, [ ANY, BIND('x') ], ANY ]) ); #
     };
 
-X    do {
+    # slice mutation.
+    do {
       my $a = [ 1, 2, 3, 4 ]; #
       my $p = [ 1, ANY, REST(BIND('s')) ]; #
       my $r = matches($a, $p); # TRUE
       ok($r); # TRUE
       ok(Compare($r->{'BIND'}{'s'}{'v'}[0], [ 3, 4 ])); # TRUE
-      $p->[0] = 'x'; #
+      $r->{'BIND'}{'s'}{'v'}[0][0] = 'x'; #
       match($a, [ 1, 2, 'x', 4 ]); # TRUE
     };
+
+# RANG operators: NOT FINISHED.
+
+  ! match( [ ],                  [ 1, 2, QUES( ANY(), 4 ) ] );
+  ! match( [ 1 ],                [ 1, 2, QUES( ANY(), 4 ) ] );
+    match( [ 1, 2 ],             [ 1, 2, QUES( ANY(), 4 ) ] );
+  ! match( [ 1, 2, 3 ],          [ 1, 2, QUES( ANY(), 4 ) ] );
+    match( [ 1, 2, 3, 4 ],       [ 1, 2, QUES( ANY(), 4 ) ] );
+  ! match( [ 1, 2, 3, 4, 3 ],    [ 1, 2, QUES( ANY(), 4 ) ] );
+X    match( [ 1, 2, 3, 4, 3 ],    [ 1, 2, QUES( ANY(), 4 ), 3 ] );
+  ! match( [ 1, 2, 3, 4, 3, 4 ], [ 1, 2, QUES( ANY(), 4 ) ] );
+
+  ! match( [ ],                  [ 1, 2, PLUS( ANY(), 4 ) ] );
+  ! match( [ 1 ],                [ 1, 2, PLUS( ANY(), 4 ) ] );
+  ! match( [ 1, 2 ],             [ 1, 2, PLUS( ANY(), 4 ) ] );
+  ! match( [ 1, 2, 3 ],          [ 1, 2, PLUS( ANY(), 4 ) ] );
+    match( [ 1, 2, 3, 4 ],       [ 1, 2, PLUS( ANY(), 4 ) ] );
+X    match( [ 1, 2, 3, 4, 5 ],    [ 1, 2, PLUS( ANY(), 4 ), 5 ] );
+X  ! match( [ 1, 2, 3, 4, 3 ],    [ 1, 2, PLUS( ANY(), 4 ) ] );
+X    match( [ 1, 2, 3, 4, 3, 4 ], [ 1, 2, PLUS( ANY(), 4 ) ] );
+X    match( [ 1, 2, 3, 4, 3, 4, 5 ], [ 1, 2, PLUS( ANY(), 4 ), 5 ] );
 
  };
 #)emacs
@@ -180,8 +203,8 @@ X    do {
 
   # Count embedded ok()'s.
   for my $t ( @tests ) {
-    my @matches = $t =~ /(ok[(])/g;
-    $n_tests += @matches;
+    my @oks = $t =~ /(ok[(])/g;
+    $n_tests += @oks;
   }
 
   #warn "n_tests=$n_tests";
@@ -224,7 +247,7 @@ sub UNIT_TEST
 
     # $DB::single = 1;
     my $rtn = eval "[ $expr ];";
-    if ( $@ or ref($rtn) ne'ARRAY' or @$rtn < 2 ) {
+    if ( $@ or ref($rtn) ne 'ARRAY' or @$rtn < 2 ) {
       print STDERR '  EVAL ERROR: ', $test, "\n";
       die "$@: $expr";
     }
@@ -236,7 +259,7 @@ sub UNIT_TEST
     if ( $results ) {
       # Validate the BIND and COLLECT values and paths.
       for my $ck ( $results->{'_BIND'}, $results->{'_COLLECT'} ) {
-	if ( my $c = $results->{$ck} ) {
+	if ( my $c = $ck && $results->{$ck} ) {
 	  for my $k ( keys %$c ) {
 	    my $e = $c->{$k};
 	    next unless $e->{'p'};
@@ -244,8 +267,8 @@ sub UNIT_TEST
 	      my $v = $e->{'v'}[$i];
 	      my $p = $e->{'p'}[$i];
 
-	      my $ps = match_path_str($p, '$_[0]', $results);
-	      my $pv = match_path_get($p, $results->{'root'}, $results);
+	      my $ps = $results->match_path_str($p);
+	      my $pv = $results->match_path_get($p);
 
 	      my $path_ok = Compare($pv, $v);
 	      print "  PATH $ps ($pv) ne $v\n" if ! $path_ok;
@@ -260,8 +283,8 @@ sub UNIT_TEST
       delete $results->{'depth'};
       delete $results->{'path'};
       delete $results->{'root'};
+      delete $results->{'pattern'};
     }
-
 
     # Print results?
     if ( $tv || ! $passed ) {
@@ -284,3 +307,13 @@ sub UNIT_TEST
 UNIT_TEST();
 
 1;
+
+### Keep these comments at end of file: kurtstephens@acm.org 2001/12/28 ###
+### Local Variables: ###
+### mode:perl ###
+### perl-indent-level:2 ###
+### perl-continued-statement-offset:0 ###
+### perl-brace-offset:0 ###
+### perl-label-offset:0 ###
+### End: ###
+

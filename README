@@ -27,14 +27,17 @@ This module requires these other modules and libraries:
 
    Data::Dumper
    Data::Compare
+   String::Escape
 
 COPYRIGHT AND LICENCE
 
 Put the correct copyright and licence information here.
 
-Copyright (C) 2001 Kurt Stephens.
+Copyright (C) 2001 Kurt Stephens and ION, Inc.
+
+www.ionink.com
 
 REVISION
 
-$Id: README,v 1.2 2001/12/24 10:07:23 stephens Exp $
+$Id: README,v 1.3 2002/04/22 06:36:58 stephens Exp $
 

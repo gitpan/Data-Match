@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 
-# $Id: t3.t,v 1.2 2001/12/28 03:56:43 stephens Exp $
+# $Id: t3.t,v 1.3 2002/04/22 06:36:58 stephens Exp $
 
 # Test for Data::Match::Slice::{Array,Hash}
 
@@ -48,3 +48,13 @@ ok( Compare([ @ai, @x ], \@a) );
 #15
 
 1;
+
+### Keep these comments at end of file: kurtstephens@acm.org 2001/12/28 ###
+### Local Variables: ###
+### mode:perl ###
+### perl-indent-level:2 ###
+### perl-continued-statement-offset:0 ###
+### perl-brace-offset:0 ###
+### perl-label-offset:0 ###
+### End: ###
+
